@@ -3,14 +3,14 @@
 This document captures the results of systematically exploring Hermes Agent's capabilities. Run `hermes --help` for the latest CLI reference.
 
 - **Last updated:** 2026-05-23
-- **Hermes Agent version:** 0.14.0 (2026.5.16)
+- **Hermes Agent version:** 0.11.0 (2026.4.23)
 
 ---
 
 ## Step 1: Installation
 
 - **Package name:** `hermes-agent` (confirmed on PyPI)
-- **Latest version:** 0.14.0
+- **Latest version:** 0.11.0
 - **Install command:** `pip install hermes-agent`
 
 **Dependencies installed alongside:**
@@ -37,10 +37,10 @@ croniter==6.0.0, PyJWT==2.12.1, psutil==7.2.2
 **Version output:**
 
 ```
-Hermes Agent v0.14.0 (2026.5.16)
-Project: <venv>/lib/python3.14/site-packages
-Python: 3.14.5
-OpenAI SDK: 2.24.0
+Hermes Agent v0.11.0 (2026.4.23)
+Project: /Users/roelvideler/.hermes/hermes-agent
+Python: 3.11.15
+OpenAI SDK: 2.32.0
 ```
 
 > **Note:** Hermes reports Python 3.14.5 as its runtime version. This reflects the Python version in the environment where Hermes was installed, not a requirement of Hermes itself.
@@ -533,7 +533,9 @@ hermes config migrate   - Update config with new options
 
 ## Step 13: Kanban (Multi-Profile Collaboration)
 
-- **Kanban:** YES — Hermes has a durable SQLite-backed task board
+> **Note:** The kanban system is **not available in v0.11.0**. It may be a v0.14.0+ feature. The CLI capabilities documented below are from newer version documentation and are included here for reference only.
+
+- **Kanban:** YES — Hermes has a durable SQLite-backed task board *(v0.14.0+ only)*
 - **Command:** `hermes kanban`
 - **Description:** Multi-profile collaboration board shared across profiles
 

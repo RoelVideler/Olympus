@@ -1,6 +1,7 @@
 # Phase 1: Hermes Capability Assessment
 
 ## Date: 2026-05-24
+## Hermes Agent version: 0.11.0 (2026.4.23)
 
 ## Question: Does Hermes Agent's gateway handle multi-profile management natively?
 
