@@ -1,4 +1,5 @@
 # Hephaestus: Home automation, devices, maintenance
+# Profile name is derived from directory name: profiles/hephaestus/
 model:
   provider: openai-compatible
   base_url: http://localhost:11434/v1
@@ -6,11 +7,14 @@ model:
 
 run_mode: on-demand
 
+# Hermes uses a flat toolsets list (not tools.allow/block).
+# Tool name is 'homeassistant' (no underscore) — confirmed via `hermes tools list`.
 toolsets:
   - web
   - memory
   - homeassistant
-  - share_knowledge
+
+# Memory uses Hermes defaults.
 
 agent:
   max_turns: 15

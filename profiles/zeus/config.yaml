@@ -1,4 +1,5 @@
 # Zeus: Front-door orchestrator — routing, workflow, tone, chip-in coordination
+# Profile name is derived from directory name: profiles/zeus/
 model:
   provider: openai-compatible
   base_url: http://localhost:11434/v1
@@ -6,13 +7,21 @@ model:
 
 run_mode: always-on
 
+# Hermes uses a flat toolsets list (not tools.allow/block).
+# Tools are enabled/disabled via `hermes tools enable/disable` or listed here.
+# Valid built-in toolsets: web, browser, terminal, file, code_execution, vision,
+# image_gen, moa, tts, skills, todo, memory, session_search, clarify, delegation,
+# cronjob, messaging, rl, homeassistant, spotify, yuanbao, video, x_search,
+# video_gen, computer_use
 toolsets:
   - web
   - memory
   - session_search
   - clarify
   - delegation
-  - share_knowledge
+
+# Memory uses Hermes defaults (memory_enabled: true, provider: local).
+# Configure external memory provider via `hermes memory` if needed.
 
 agent:
   max_turns: 30

@@ -1,4 +1,5 @@
 # Metis: Business domain expert — markets, practices, development strategy
+# Profile name is derived from directory name: profiles/metis/
 model:
   provider: openai-compatible
   base_url: http://localhost:11434/v1
@@ -6,11 +7,13 @@ model:
 
 run_mode: on-demand
 
+# Hermes uses a flat toolsets list (not tools.allow/block).
 toolsets:
   - web
   - memory
   - session_search
-  - share_knowledge
+
+# Memory uses Hermes defaults.
 
 agent:
   max_turns: 25
