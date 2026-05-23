@@ -1,7 +1,6 @@
-import sqlite3
 import os
+import sqlite3
 import pytest
-from pathlib import Path
 
 from tools.share_knowledge import ShareKnowledgeTool
 
@@ -24,11 +23,6 @@ def initialized_db(db_path, schema_sql):
     conn.executescript(schema_sql)
     conn.close()
     return db_path
-
-
-@pytest.fixture
-def tool(initialized_db):
-    return ShareKnowledgeTool(db_path=initialized_db, allowed_scopes=None)
 
 
 def test_write_and_query(initialized_db):
@@ -113,7 +107,7 @@ def test_write_requires_fact(initialized_db):
         domain="health",
         fact=None,
     )
-    assert "error" in result
+    assert "fact is required" in result["error"]
 
 
 def test_multiple_facts_ordered(initialized_db):

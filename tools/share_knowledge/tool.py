@@ -59,8 +59,6 @@ class ShareKnowledgeTool:
             return self._query(scope, domain, limit)
         elif action == "delete":
             return self._delete(scope, domain, fact)
-        else:
-            return {"error": f"Unknown action: {action}"}
 
     def _write(self, scope: str, domain: str, fact: str, confidence: float) -> dict:
         if not fact:
@@ -74,7 +72,7 @@ class ShareKnowledgeTool:
                 INSERT INTO olympus_knowledge (id, scope, domain, fact, confidence, source_profile)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (fact_id, scope, domain, fact, confidence, "current_agent"),
+                (fact_id, scope, domain, fact, confidence, "current_agent"),  # TODO: Replace with agent's identity context
             )
             conn.commit()
             return {"status": "written", "id": fact_id}
@@ -91,7 +89,7 @@ class ShareKnowledgeTool:
                 SELECT id, domain, fact, confidence, source_profile, created_at
                 FROM olympus_knowledge
                 WHERE scope = ? AND domain = ?
-                ORDER BY rowid DESC
+                ORDER BY created_at DESC, rowid DESC
                 LIMIT ?
                 """,
                 (scope, domain, limit),
