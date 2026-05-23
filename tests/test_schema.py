@@ -70,3 +70,57 @@ def test_run_mode_constraint(db):
             ("test", "test", "invalid_mode")
         )
         db.commit()
+
+def test_fts_sync_on_update(db):
+    db.execute(
+        "INSERT INTO olympus_knowledge (id, scope, domain, fact, source_profile) VALUES (?, ?, ?, ?, ?)",
+        ("test-update", "personal", "health", "original fact", "zeus")
+    )
+    db.commit()
+    db.execute(
+        "UPDATE olympus_knowledge SET fact = 'updated fact' WHERE id = 'test-update'"
+    )
+    db.commit()
+    result = db.execute(
+        "SELECT fact FROM olympus_knowledge_fts WHERE olympus_knowledge_fts MATCH 'updated'"
+    )
+    assert len(result.fetchall()) == 1
+    result = db.execute(
+        "SELECT fact FROM olympus_knowledge_fts WHERE olympus_knowledge_fts MATCH 'original'"
+    )
+    assert len(result.fetchall()) == 0
+
+def test_fts_sync_on_delete(db):
+    db.execute(
+        "INSERT INTO olympus_knowledge (id, scope, domain, fact, source_profile) VALUES (?, ?, ?, ?, ?)",
+        ("test-delete", "personal", "health", "deletable fact", "zeus")
+    )
+    db.commit()
+    db.execute("DELETE FROM olympus_knowledge WHERE id = 'test-delete'")
+    db.commit()
+    result = db.execute(
+        "SELECT fact FROM olympus_knowledge_fts WHERE olympus_knowledge_fts MATCH 'deletable'"
+    )
+    assert len(result.fetchall()) == 0
+
+def test_confidence_constraint(db):
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            "INSERT INTO olympus_knowledge (id, scope, domain, fact, source_profile, confidence) VALUES (?, ?, ?, ?, ?, ?)",
+            ("test-conf", "personal", "health", "test fact", "zeus", 1.5)
+        )
+        db.commit()
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            "INSERT INTO olympus_knowledge (id, scope, domain, fact, source_profile, confidence) VALUES (?, ?, ?, ?, ?, ?)",
+            ("test-conf2", "personal", "health", "test fact", "zeus", -0.1)
+        )
+        db.commit()
+
+def test_status_constraint(db):
+    with pytest.raises(sqlite3.IntegrityError):
+        db.execute(
+            "INSERT INTO agent_profiles (name, hermes_profile, status) VALUES (?, ?, ?)",
+            ("test-status", "test", "invalid_status")
+        )
+        db.commit()

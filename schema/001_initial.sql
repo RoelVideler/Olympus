@@ -3,7 +3,8 @@
 
 -- Shared facts that any agent can read/write
 CREATE TABLE IF NOT EXISTS olympus_knowledge (
-    id TEXT PRIMARY KEY,
+    rowid INTEGER PRIMARY KEY,
+    id TEXT NOT NULL UNIQUE,
     scope TEXT NOT NULL CHECK(scope IN ('personal', 'business', 'global')),
     domain TEXT NOT NULL,
     fact TEXT NOT NULL,
@@ -27,13 +28,21 @@ CREATE TRIGGER IF NOT EXISTS olympus_knowledge_ai AFTER INSERT ON olympus_knowle
 END;
 
 CREATE TRIGGER IF NOT EXISTS olympus_knowledge_ad AFTER DELETE ON olympus_knowledge BEGIN
-    DELETE FROM olympus_knowledge_fts WHERE rowid = old.rowid;
+    INSERT INTO olympus_knowledge_fts(olympus_knowledge_fts, rowid, fact, domain, scope)
+    VALUES('delete', old.rowid, old.fact, old.domain, old.scope);
 END;
 
 CREATE TRIGGER IF NOT EXISTS olympus_knowledge_au AFTER UPDATE ON olympus_knowledge BEGIN
-    UPDATE olympus_knowledge_fts
-    SET fact = new.fact, domain = new.domain, scope = new.scope
-    WHERE rowid = new.rowid;
+    INSERT INTO olympus_knowledge_fts(olympus_knowledge_fts, rowid, fact, domain, scope)
+    VALUES('delete', old.rowid, old.fact, old.domain, old.scope);
+    INSERT INTO olympus_knowledge_fts(rowid, fact, domain, scope)
+    VALUES (new.rowid, new.fact, new.domain, new.scope);
+END;
+
+CREATE TRIGGER IF NOT EXISTS olympus_knowledge_updated_at AFTER UPDATE ON olympus_knowledge
+    WHEN old.fact != new.fact OR old.domain != new.domain OR old.scope != new.domain
+    OR old.confidence != new.confidence OR old.source_profile != new.source_profile BEGIN
+    UPDATE olympus_knowledge SET updated_at = datetime('now') WHERE rowid = new.rowid;
 END;
 
 -- Agent registry
