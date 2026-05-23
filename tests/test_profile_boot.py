@@ -20,6 +20,15 @@ PROFILES = [
     "midas",
 ]
 
+ERROR_INDICATORS = [
+    "Profile does not exist",
+    "Error",
+    "Failed",
+    "error:",
+    "Traceback",
+    "Exception",
+]
+
 
 def hermes_available() -> bool:
     try:
@@ -45,3 +54,6 @@ def test_profile_responds(profile):
     )
     assert result.returncode == 0, f"Profile {profile} failed: {result.stderr}"
     assert result.stdout.strip(), f"Profile {profile} returned empty response"
+    output = result.stdout.strip()
+    for indicator in ERROR_INDICATORS:
+        assert indicator not in output, f"Profile {profile} output contains error: {indicator}"

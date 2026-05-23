@@ -29,6 +29,15 @@ PROFILES = [
 
 TEST_PROMPT = "Who are you? Respond in one sentence."
 
+ERROR_INDICATORS = [
+    "Profile does not exist",
+    "Error",
+    "Failed",
+    "error:",
+    "Traceback",
+    "Exception",
+]
+
 
 def verify_profile(profile_name: str) -> tuple[bool, str]:
     """Verify a single profile boots and responds."""
@@ -42,10 +51,18 @@ def verify_profile(profile_name: str) -> tuple[bool, str]:
         )
         elapsed = time.time() - start
 
-        if result.returncode == 0 and result.stdout.strip():
-            return True, f"OK ({elapsed:.2f}s)"
-        else:
-            return False, f"FAILED: {result.stderr.strip()}"
+        if result.returncode != 0:
+            return False, f"FAILED (exit {result.returncode}): {result.stderr.strip()}"
+
+        output = result.stdout.strip()
+        if not output:
+            return False, "FAILED: empty response"
+
+        for indicator in ERROR_INDICATORS:
+            if indicator in output:
+                return False, f"FAILED: error in output — {indicator}"
+
+        return True, f"OK ({elapsed:.2f}s)"
     except subprocess.TimeoutExpired:
         return False, "TIMEOUT (>60s)"
     except FileNotFoundError:
