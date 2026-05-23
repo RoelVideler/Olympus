@@ -1,0 +1,189 @@
+{
+  "reviewer": "security-architect",
+  "findings": [
+    {
+      "title": "share_knowledge tool has no access control — any agent can read or write any scope",
+      "severity": "P1",
+      "section": "Cross-Agent Knowledge (PostgreSQL)",
+      "why_it_matters": "The `share_knowledge` tool is available to all 10 agent profiles and uses a plain-text `scope` field ('personal', 'business', 'global') with no enforcement. A compromised or malicious agent — or one tricked via prompt injection — can read health data (Iaso's domain), financial data (Plutus/Midas), business contacts (Metis), and personal schedules (Chronos). There is no row-level security, no per-scope database credentials, and no origin verification on the `source_profile` column. This single table is the crown jewels of the system with no access control.",
+      "finding_type": "omission",
+      "autofix_class": "auto",
+      "suggested_fix": "Implement one of: (a) PostgreSQL row-level security keyed on agent role + scope, (b) separate database users per scope with GRANT-level restrictions, or (c) a dedicated sharing service that validates a caller's identity and permitted scopes before issuing SQL queries.",
+      "confidence": 0.90,
+      "evidence": [
+        "CREATE TABLE olympus_knowledge ( ... scope TEXT NOT NULL, -- 'personal', 'business', 'global' ... source_profile TEXT NOT NULL -- Which agent wrote this ... );",
+        "share_knowledge tool. All | PostgreSQL cross-agent knowledge",
+        "zeus: 'Client X prefers morning calls' → calls share_knowledge(scope='business', domain='preference', fact='...')"
+      ]
+    },
+    {
+      "title": "LLM provider API credentials stored in plaintext per-profile config files",
+      "severity": "P1",
+      "section": "LLM Tiering",
+      "why_it_matters": "Each agent profile stores its provider configuration in `~/.hermes/<profile>/config.yaml` on disk. The document shows examples with `provider: openrouter` and `model:` assignments, but Hermes provider configs also include API keys. There is no mention of encrypted config, environment variable injection, or a secrets manager. Ten profiles means ten copies of API keys on disk. If any profile's config directory is readable (e.g., via a compromised Hermes tool like file operations or terminal), all LLM provider credentials are exposed. The self-evolution loop that generates code could also inadvertently read and leak these files.",
+      "finding_type": "omission",
+      "autofix_class": "auto",
+      "suggested_fix": "Use Hermes' built-in credential refresh mechanism documented on line 190 (if it supports encrypted storage). Otherwise, inject API keys via environment variables or a vault (e.g., macOS Keychain, 1Password CLI, or HashiCorp Vault) rather than embedding them in YAML config files on disk.",
+      "confidence": 0.80,
+      "evidence": [
+        "Each profile configures its own provider + model in ~/.hermes/<profile>/config.yaml",
+        "provider: openrouter\nmodel: anthropic/claude-sonnet-4",
+        "provider: openai-compatible\nbase_url: http://localhost:11434/v1\nmodel: hermes-4-70b",
+        "Hermes' provider resolution handles failover, health checks, and credential refresh natively."
+      ]
+    },
+    {
+      "title": "No encryption at rest for PostgreSQL health, finance, and personal data",
+      "severity": "P1",
+      "section": "Cross-Agent Knowledge (PostgreSQL)",
+      "why_it_matters": "The PostgreSQL schema explicitly stores health data (domain='health' from Withings sync via Iaso), financial data (domain='finance' from Plutus/Midas), business contacts, and personal preferences. The plan does not mention encryption at rest, transparent data encryption (TDE), or pg_tde. On a personal machine or VPS, the PostgreSQL data directory is readable by any process with filesystem access — including a compromised Hermes profile that has file operations enabled.",
+      "finding_type": "omission",
+      "autofix_class": "auto",
+      "suggested_fix": "Enable PostgreSQL TDE or filesystem-level encryption. Document that this must be in place before Phase 1 deploys the schema with real data.",
+      "confidence": 0.85,
+      "evidence": [
+        "CREATE TABLE olympus_knowledge ( ... domain TEXT NOT NULL, -- 'health', 'finance', 'schedule', 'contact', ... )",
+        "Withings health API (Iaso), WhatsApp API (Hermes), Home Assistant REST API (Hephaestus), Google Calendar MCP (Chronos, Zeus)"
+      ]
+    },
+    {
+      "title": "Self-evolution loop generates code with no sandbox or human review gate",
+      "severity": "P1",
+      "section": "Phase 4: Full Rollout",
+      "why_it_matters": "Hermes' self-evolution loop autonomously calls LLMs to generate procedural skills stored in `~/.hermes/<profile>/skills/`. These skills execute within the Hermes runtime. If a prompt injected through a cron output, an email (Gmail MCP), or a Withings data sync poisons the model's context, the generated skill could exfiltrate data, corrupt memory, or execute arbitrary commands via Hermes' built-in terminal/browser/file tools. The plan only flags cost risk ('avoid bill shock') but not the code-injection risk of autonomous code generation.",
+      "finding_type": "omission",
+      "autofix_class": "present",
+      "suggested_fix": "Require a security strategy for self-evolution: (a) generated skills run in a sandboxed environment (e.g., Docker container, restricted Python subprocess), (b) generated skills require human review before activation in early phases, (c) the skill generation prompt is hardened against injection, and (d) generated code is scanned for dangerous API calls (file write, network, subprocess) before registration.",
+      "confidence": 0.75,
+      "evidence": [
+        "Skills: ~/.hermes/<profile>/skills/ — auto-generated procedural skills from Hermes' self-evolution loop",
+        "Hermes self-evolution enabled per profile",
+        "Model cost management: Per-profile model assignments need monitoring to avoid bill shock from the self-evolution loop calling expensive models for background work."
+      ]
+    },
+    {
+      "title": "Gateway authentication mechanism is unspecified and may not cover the new API endpoint",
+      "severity": "P2",
+      "section": "Gateway",
+      "why_it_matters": "The gateway forwards `POST /v1/chat/completions` to Zeus and keeps 'authentication' from TheTemple, but does not describe the auth mechanism, whether it applies to the new API path, or whether there are rate limits. If the gateway is exposed beyond localhost (the architecture diagram shows 'Dashboard / CLI / Telegram' as user entry points — Telegram implies external reachability), an unauthenticated or weakly authenticated API endpoint gives anyone access to the full agent system including its tools, memory, and PostgreSQL data.",
+      "finding_type": "omission",
+      "autofix_class": "present",
+      "suggested_fix": "Specify the authentication mechanism (API key? session cookie? OAuth proxy?) and explicitly state which endpoints require auth, which don't, and what rate limiting / abuse prevention exists. Document this before Phase 2 when the gateway goes live with Zeus.",
+      "confidence": 0.70,
+      "evidence": [
+        "User (Dashboard / CLI / Telegram)",
+        "Gateway (Express, minimal proxy) - POST /v1/chat/completions → Zeus",
+        "3. Keep: serving the React dashboard, WebSocket for streaming, authentication"
+      ]
+    },
+    {
+      "title": "Telegram input channel appears in architecture diagram but is never described or secured",
+      "severity": "P2",
+      "section": "Architecture",
+      "why_it_matters": "The architecture diagram lists 'Telegram' as a user input alongside Dashboard and CLI, but the rest of the document never describes how Telegram connects, whether it goes through the Gateway, how messages are authenticated as coming from the real user, or what input validation exists. A Telegram bot without proper authentication and rate limiting is a publicly reachable attack surface that could be used to spam the agent system, trigger expensive LLM calls, or inject malicious prompts.",
+      "finding_type": "omission",
+      "autofix_class": "present",
+      "suggested_fix": "Either remove Telegram from the diagram until it is designed, or specify: Telegram bot token management, user authentication (allowlisted Telegram user IDs), message rate limits, and how it integrates with the Gateway or Zeus directly.",
+      "confidence": 0.65,
+      "evidence": [
+        "User (Dashboard / CLI / Telegram)",
+        "Gateway (Express, minimal proxy) - POST /v1/chat/completions → Zeus - Static dashboard, WebSocket"
+      ]
+    },
+    {
+      "title": "No data retention or deletion policy for health, finance, and conversation data",
+      "severity": "P2",
+      "section": "Memory Architecture",
+      "why_it_matters": "PostgreSQL stores health data (Withings), financial data, business contacts, and personal preferences indefinitely. Per-profile SQLite databases store full conversation histories with no mention of retention, rotation, or deletion. If this is a personal assistant with real personal data, indefinite retention creates unnecessary exposure in case of compromise. The schema has `created_at` and `updated_at` timestamps but no cleanup logic.",
+      "finding_type": "omission",
+      "autofix_class": "auto",
+      "suggested_fix": "Define retention periods per domain (e.g., health data: 90 days of vitals, conversation history: 30 days, preferences: indefinite). Implement a cleanup cron job or PostgreSQL pg_cron to enforce these.",
+      "confidence": 0.70,
+      "evidence": [
+        "CREATE TABLE olympus_knowledge ( ... domain TEXT NOT NULL, -- 'health', 'finance', 'schedule', 'contact', ... created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW() );",
+        "Session storage: hermes_state.sqlite — conversation history with full-text search",
+        "Each profile maintains its own: Session storage, Memory files, Skills"
+      ]
+    },
+    {
+      "title": "Sensitive personal data shared with third-party LLM providers without classification",
+      "severity": "P2",
+      "section": "LLM Tiering",
+      "why_it_matters": "All agent prompts — including health symptoms (Iaso), financial transactions (Plutus/Midas), calendar events (Chronos), and personal emails (Hermes) — are sent to OpenRouter or OpenAI API endpoints. There is no data sensitivity classification that would route sensitive queries to a local model (Plutus uses `ollama` but only because it's 'free/local'). The plan does not discuss data processing agreements, provider data retention policies, or whether these providers can train on API traffic. The self-evolution loop amplifies this: any model call could leak context from other domains.",
+      "finding_type": "omission",
+      "autofix_class": "present",
+      "suggested_fix": "Add a data-classification layer: define which domains must stay on local models (e.g., health raw data, financial transactions) vs. can use cloud providers (e.g., general knowledge queries). Document third-party providers' data handling policies and ensure they match the user's requirements.",
+      "confidence": 0.65,
+      "evidence": [
+        "Each profile configures its own provider + model in ~/.hermes/<profile>/config.yaml",
+        "Example: Zeus config - provider: openrouter, model: anthropic/claude-sonnet-4",
+        "Example: Plutus config (local, free, slow) - provider: openai-compatible, base_url: http://localhost:11434/v1",
+        "Health data sync | Iaso | 08:00, 20:00 daily",
+        "Portfolio check | Plutus | 09:30 weekdays"
+      ]
+    },
+    {
+      "title": "No audit trail for autonomous cron actions",
+      "severity": "P3",
+      "section": "Cron & Automation",
+      "why_it_matters": "Cron jobs autonomously send emails (Hermes: triage), sync health data (Iaso), check portfolios (Plutus), and create invoices (Midas). The plan describes these as fully autonomous with no mention of an audit log. If a cron action goes wrong — e.g., sends an incorrect email, bills a client incorrectly, or records corrupted health data — there is no traceability to diagnose what happened. Without audit, it is also impossible to detect if a compromised profile is acting maliciously via cron.",
+      "finding_type": "omission",
+      "autofix_class": "auto",
+      "suggested_fix": "Add structured audit logging to all autonomous actions: log actor (profile), action (tool call with parameters), timestamp, and result. Store in a write-only log table or external log service. Include these logs in the incident response plan.",
+      "confidence": 0.60,
+      "evidence": [
+        "| Email triage | Hermes | Every 30 min |",
+        "| Health data sync | Iaso | 08:00, 20:00 daily |",
+        "| Portfolio check | Plutus | 09:30 weekdays |",
+        "| Invoice reminder | Midas | 1st of month |"
+      ]
+    },
+    {
+      "title": "No inter-profile authentication on HTTP communication between agents",
+      "severity": "P3",
+      "section": "Architecture",
+      "why_it_matters": "Zeus communicates with other agent profiles via `HTTP POST /v1/chat/completions` on localhost ports with no authentication described. While localhost binding provides network-level restriction, any process on the machine — including a compromised Hermes profile or a generated skill — can impersonate Zeus and send arbitrary requests to other profiles. With the self-evolution loop generating code, a malicious generated skill could use this to e.g., ask Iaso to exfiltrate health data or tell Plutus to approve a transaction.",
+      "finding_type": "omission",
+      "autofix_class": "auto",
+      "suggested_fix": "Add a shared secret or mTLS between profiles for inter-process API calls. Even a simple bearer token injected via environment variable (and not exposed to agent tools) would prevent a compromised profile from impersonating Zeus.",
+      "confidence": 0.55,
+      "evidence": [
+        "Each agent exposes Hermes Agent's API server on a unique port (localhost:10001 for Chronos, etc.). Zeus calls profiles via HTTP POST /v1/chat/completions with OpenAI-compatible format.",
+        "Skills: ~/.hermes/<profile>/skills/ — auto-generated procedural skills from Hermes' self-evolution loop"
+      ]
+    },
+    {
+      "title": "Third-party integration failure modes not considered (compromise, unavailability, malicious data)",
+      "severity": "P3",
+      "section": "Olympus Domain Tools",
+      "why_it_matters": "The plan integrates with Home Assistant (physical home control), Withings (health data), Gmail (email), WhatsApp (messaging), and Google Calendar — but does not discuss failure modes. If a Home Assistant API key is compromised, an attacker can control smart locks, cameras, and lights. If Withings returns malicious data, it poisons the health knowledge base. If the Gmail MCP is unavailable, does email triage fail silently or queue? Without documented failure modes and degraded-behavior policies, the system may act on untrusted or stale data.",
+      "finding_type": "omission",
+      "autofix_class": "present",
+      "suggested_fix": "Document per integration: (a) impact of credential compromise, (b) data validation on incoming data, (c) fail-open vs. fail-closed behavior on unavailability, (d) minimum data scope requested from each API (e.g., read-only vs. read-write tokens).",
+      "confidence": 0.55,
+      "evidence": [
+        "| home_assistant | Hephaestus | Home Assistant REST API |",
+        "| withings_sync | Iaso | Withings health API |",
+        "| gmail_triage | Hermes | Gmail MCP |",
+        "| whatsapp_send | Hermes | WhatsApp API |",
+        "| calendar_query | Chronos, Zeus | Google Calendar MCP |"
+      ]
+    }
+  ],
+  "residual_risks": [
+    "Even with inter-profile auth and database access controls, prompt injection through user messages is an inherent risk of LLM-based agents — any agent that processes untrusted input can be manipulated.",
+    "Hermes Agent runtime vulnerabilities (not assessed by this plan) — the plan relies heavily on Hermes' security posture for profile isolation, credential management, MCP security, and tool sandboxing without auditing Hermes itself.",
+    "Hermes built-in tools (terminal, browser, file operations) are available to every profile by default and create a broad attack surface if any profile's prompt is successfully injected.",
+    "The self-evolution loop creates a feedback amplification risk: a poisoned fact in PostgreSQL → queried by an agent → influences LLM call → generates malicious skill → persists and executes.",
+    "No plan for API key rotation, incident response, or security monitoring."
+  ],
+  "deferred_questions": [
+    "What authentication mechanism does the existing Gateway use, and does it scale to the new architecture? (Phase 2 prerequisite.)",
+    "Does Hermes Agent support encrypted config storage or environment-variable-based credential injection for provider API keys?",
+    "Are the per-profile Hermes API servers bound to localhost only, or are they accessible from other hosts? The document says 'localhost:10001' but should be explicit.",
+    "Will PostgreSQL be on the same host or a separate server? If separate, what secures the connection (TLS, certificate auth)?",
+    "Is there a security review planned before Phase 4 when self-evolution is enabled?",
+    "What is the threat model for Telegram integration if it is planned?",
+    "Does the user accept that all their health and financial data will transit through third-party LLM providers (OpenRouter, OpenAI)?"
+  ]
+}
