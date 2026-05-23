@@ -44,6 +44,7 @@ class ShareKnowledgeTool:
         scope: Literal["personal", "business", "global"],
         domain: str,
         fact: str | None = None,
+        id: str | None = None,
         confidence: float = 1.0,
         limit: int = 10,
     ) -> dict:
@@ -58,7 +59,7 @@ class ShareKnowledgeTool:
         elif action == "query":
             return self._query(scope, domain, limit)
         elif action == "delete":
-            return self._delete(scope, domain, fact)
+            return self._delete(scope, domain, fact, id)
 
     def _write(self, scope: str, domain: str, fact: str, confidence: float) -> dict:
         if not fact:
@@ -115,9 +116,23 @@ class ShareKnowledgeTool:
         finally:
             conn.close()
 
-    def _delete(self, scope: str, domain: str, fact: str | None) -> dict:
+    def _delete(self, scope: str, domain: str, fact: str | None, fact_id: str | None) -> dict:
+        if fact_id:
+            conn = self._connect()
+            try:
+                cursor = conn.execute(
+                    "DELETE FROM olympus_knowledge WHERE id = ?",
+                    (fact_id,),
+                )
+                conn.commit()
+                return {"status": "deleted", "rows_affected": cursor.rowcount}
+            except sqlite3.Error as e:
+                return {"error": str(e)}
+            finally:
+                conn.close()
+
         if not fact:
-            return {"error": "fact is required for delete action"}
+            return {"error": "id or fact is required for delete action"}
 
         conn = self._connect()
         try:
