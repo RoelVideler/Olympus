@@ -13,6 +13,7 @@ toolsets:
   - web
   - memory
   - homeassistant
+  - share_knowledge
 
 # Memory uses Hermes defaults.
 

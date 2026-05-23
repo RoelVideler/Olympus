@@ -13,6 +13,7 @@ toolsets:
   - memory
   - vision
   - image_gen
+  - share_knowledge
 
 # Memory uses Hermes defaults.
 

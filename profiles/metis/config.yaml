@@ -12,6 +12,7 @@ toolsets:
   - web
   - memory
   - session_search
+  - share_knowledge
 
 # Memory uses Hermes defaults.
 

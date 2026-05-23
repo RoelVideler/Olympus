@@ -19,6 +19,7 @@ toolsets:
   - session_search
   - clarify
   - delegation
+  - share_knowledge
 
 # Memory uses Hermes defaults (memory_enabled: true, provider: local).
 # Configure external memory provider via `hermes memory` if needed.

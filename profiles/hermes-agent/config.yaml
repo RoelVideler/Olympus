@@ -12,6 +12,7 @@ toolsets:
   - web
   - memory
   - messaging
+  - share_knowledge
 
 # Memory uses Hermes defaults.
 

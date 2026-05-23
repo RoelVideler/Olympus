@@ -11,6 +11,7 @@ run_mode: on-demand
 toolsets:
   - web
   - memory
+  - share_knowledge
 
 # Memory uses Hermes defaults.
 
