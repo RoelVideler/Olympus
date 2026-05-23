@@ -5,7 +5,6 @@ description = "Personal AI life assistant — built on Hermes Agent"
 requires-python = ">=3.11"
 dependencies = [
     "hermes-agent",  # Nous Research Hermes Agent
-    "pytest>=7.0",
 ]
 
 [project.optional-dependencies]
@@ -15,4 +14,4 @@ dev = [
 
 [build-system]
 requires = ["setuptools>=68.0"]
-build-backend = "setuptools.backends._legacy:_Backend"
+build-backend = "setuptools.build_meta"
