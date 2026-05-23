@@ -4,10 +4,13 @@ model:
   base_url: http://localhost:11434/v1
   model: qwen3.6-8b
 
+run_mode: always-on
+
 toolsets:
   - web
   - memory
   - cronjob
+  - share_knowledge
 
 agent:
   max_turns: 20

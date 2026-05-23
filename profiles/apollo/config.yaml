@@ -4,11 +4,14 @@ model:
   base_url: http://localhost:11434/v1
   model: qwen3.6-8b
 
+run_mode: on-demand
+
 toolsets:
   - web
   - memory
   - vision
   - image_gen
+  - share_knowledge
 
 agent:
   max_turns: 20
