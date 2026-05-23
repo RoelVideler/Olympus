@@ -7,34 +7,14 @@ They will be skipped if Hermes is not available.
 import subprocess
 import pytest
 
-PROFILES = [
-    "zeus",
-    "chronos",
-    "iaso",
-    "hermes-agent",
-    "philia",
-    "plutus",
-    "hephaestus",
-    "metis",
-    "apollo",
-    "midas",
-]
-
-ERROR_INDICATORS = [
-    "Profile does not exist",
-    "Error",
-    "Failed",
-    "error:",
-    "Traceback",
-    "Exception",
-]
+from olympus.constants import PROFILES, ERROR_INDICATORS
 
 
 def hermes_available() -> bool:
     try:
-        subprocess.run(["hermes", "--version"], capture_output=True, check=True)
-        return True
-    except (FileNotFoundError, subprocess.CalledProcessError):
+        result = subprocess.run(["hermes", "--version"], capture_output=True, check=False)
+        return result.returncode == 0
+    except FileNotFoundError:
         return False
 
 
@@ -46,14 +26,19 @@ pytestmark = pytest.mark.skipif(
 @pytest.mark.parametrize("profile", PROFILES)
 def test_profile_responds(profile):
     """Test that a profile boots and responds to a basic prompt."""
-    result = subprocess.run(
-        ["hermes", "-p", profile, "-z", "Who are you? Respond in one sentence."],
-        capture_output=True,
-        text=True,
-        timeout=60,
-    )
+    try:
+        result = subprocess.run(
+            ["hermes", "-p", profile, "-z", "Who are you? Respond in one sentence."],
+            capture_output=True,
+            text=True,
+            timeout=60,
+        )
+    except subprocess.TimeoutExpired:
+        pytest.fail(f"Profile {profile} timed out after 60s")
+
     assert result.returncode == 0, f"Profile {profile} failed: {result.stderr}"
     assert result.stdout.strip(), f"Profile {profile} returned empty response"
     output = result.stdout.strip()
+    output_lower = output.lower()
     for indicator in ERROR_INDICATORS:
-        assert indicator not in output, f"Profile {profile} output contains error: {indicator}"
+        assert indicator not in output_lower, f"Profile {profile} output contains error: {indicator}"

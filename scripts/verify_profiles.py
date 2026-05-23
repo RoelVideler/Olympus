@@ -14,29 +14,7 @@ import subprocess
 import time
 import sys
 
-PROFILES = [
-    "zeus",
-    "chronos",
-    "iaso",
-    "hermes-agent",
-    "philia",
-    "plutus",
-    "hephaestus",
-    "metis",
-    "apollo",
-    "midas",
-]
-
-TEST_PROMPT = "Who are you? Respond in one sentence."
-
-ERROR_INDICATORS = [
-    "Profile does not exist",
-    "Error",
-    "Failed",
-    "error:",
-    "Traceback",
-    "Exception",
-]
+from olympus.constants import PROFILES, TEST_PROMPT, ERROR_INDICATORS
 
 
 def verify_profile(profile_name: str) -> tuple[bool, str]:
@@ -52,14 +30,16 @@ def verify_profile(profile_name: str) -> tuple[bool, str]:
         elapsed = time.time() - start
 
         if result.returncode != 0:
-            return False, f"FAILED (exit {result.returncode}): {result.stderr.strip()}"
+            stderr = result.stderr.strip() or "(no stderr output)"
+            return False, f"FAILED (exit {result.returncode}): {stderr}"
 
         output = result.stdout.strip()
         if not output:
             return False, "FAILED: empty response"
 
+        output_lower = output.lower()
         for indicator in ERROR_INDICATORS:
-            if indicator in output:
+            if indicator in output_lower:
                 return False, f"FAILED: error in output — {indicator}"
 
         return True, f"OK ({elapsed:.2f}s)"
