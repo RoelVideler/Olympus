@@ -74,18 +74,19 @@ def test_scope_restriction(initialized_db):
 def test_delete(initialized_db):
     tool = ShareKnowledgeTool(db_path=initialized_db, allowed_scopes=None)
 
-    tool(
+    write_result = tool(
         action="write",
         scope="global",
         domain="contact",
         fact="John Doe - john@example.com",
     )
+    fact_id = write_result["id"]
 
     delete_result = tool(
         action="delete",
         scope="global",
         domain="contact",
-        fact="John Doe - john@example.com",
+        id=fact_id,
     )
     assert delete_result["status"] == "deleted"
     assert delete_result["rows_affected"] == 1
@@ -96,6 +97,44 @@ def test_delete(initialized_db):
         domain="contact",
     )
     assert query_result["count"] == 0
+
+
+def test_delete_by_fact_deprecated(initialized_db):
+    tool = ShareKnowledgeTool(db_path=initialized_db, allowed_scopes=None)
+
+    result = tool(
+        action="delete",
+        scope="global",
+        domain="contact",
+        fact="some fact",
+    )
+    assert "error" in result
+    assert "deprecated" in result["error"]
+
+
+def test_delete_scope_restriction(initialized_db):
+    tool_all = ShareKnowledgeTool(db_path=initialized_db, allowed_scopes=None)
+    tool_personal = ShareKnowledgeTool(db_path=initialized_db, allowed_scopes=["personal"])
+
+    write_result = tool_all(
+        action="write",
+        scope="business",
+        domain="finance",
+        fact="Revenue target: $1M",
+    )
+    fact_id = write_result["id"]
+
+    result = tool_personal(
+        action="delete",
+        scope="personal",
+        domain="finance",
+        id=fact_id,
+    )
+    assert "error" in result
+    assert "not authorized" in result["error"]
+
+    query_result = tool_all(action="query", scope="business", domain="finance")
+    assert query_result["count"] == 1
 
 
 def test_write_requires_fact(initialized_db):
@@ -121,3 +160,36 @@ def test_multiple_facts_ordered(initialized_db):
     assert result["count"] == 2
     assert result["facts"][0]["fact"] == "Fact 3"  # Most recent first
     assert result["facts"][1]["fact"] == "Fact 2"
+
+
+def test_cross_profile_round_trip(initialized_db):
+    tool_hermes = ShareKnowledgeTool(db_path=initialized_db, allowed_scopes=None)
+    tool_zeus = ShareKnowledgeTool(db_path=initialized_db, allowed_scopes=None)
+
+    write_result = tool_hermes(
+        action="write",
+        scope="global",
+        domain="contact",
+        fact="Hermes knows this fact",
+        source_profile="hermes",
+    )
+    assert write_result["status"] == "written"
+    fact_id = write_result["id"]
+
+    query_result = tool_zeus(
+        action="query",
+        scope="global",
+        domain="contact",
+    )
+    assert query_result["count"] == 1
+    assert query_result["facts"][0]["fact"] == "Hermes knows this fact"
+    assert query_result["facts"][0]["source_profile"] == "hermes"
+
+    delete_result = tool_zeus(
+        action="delete",
+        scope="global",
+        domain="contact",
+        id=fact_id,
+    )
+    assert delete_result["status"] == "deleted"
+    assert delete_result["rows_affected"] == 1

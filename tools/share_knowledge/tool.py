@@ -33,10 +33,12 @@ class ShareKnowledgeTool:
         return conn
 
     def _check_scope(self, scope: str):
+        """Return None on success, or error dict on failure."""
         if self.allowed_scopes is not None and scope not in self.allowed_scopes:
-            raise PermissionError(
-                f"Agent not authorized for scope '{scope}'. Allowed: {self.allowed_scopes}"
-            )
+            return {
+                "error": f"Agent not authorized for scope '{scope}'. Allowed: {self.allowed_scopes}"
+            }
+        return None
 
     def __call__(
         self,
@@ -47,21 +49,21 @@ class ShareKnowledgeTool:
         id: str | None = None,
         confidence: float = 1.0,
         limit: int = 10,
+        source_profile: str = "current_agent",
     ) -> dict:
         """Execute a share_knowledge action."""
-        try:
-            self._check_scope(scope)
-        except PermissionError as e:
-            return {"error": str(e)}
+        scope_error = self._check_scope(scope)
+        if scope_error:
+            return scope_error
 
         if action == "write":
-            return self._write(scope, domain, fact, confidence)
+            return self._write(scope, domain, fact, confidence, source_profile)
         elif action == "query":
             return self._query(scope, domain, limit)
         elif action == "delete":
             return self._delete(scope, domain, fact, id)
 
-    def _write(self, scope: str, domain: str, fact: str, confidence: float) -> dict:
+    def _write(self, scope: str, domain: str, fact: str, confidence: float, source_profile: str) -> dict:
         if not fact:
             return {"error": "fact is required for write action"}
 
@@ -73,7 +75,7 @@ class ShareKnowledgeTool:
                 INSERT INTO olympus_knowledge (id, scope, domain, fact, confidence, source_profile)
                 VALUES (?, ?, ?, ?, ?, ?)
                 """,
-                (fact_id, scope, domain, fact, confidence, "current_agent"),  # TODO: Replace with agent's identity context
+                (fact_id, scope, domain, fact, confidence, source_profile),
             )
             conn.commit()
             return {"status": "written", "id": fact_id}
@@ -120,6 +122,14 @@ class ShareKnowledgeTool:
         if fact_id:
             conn = self._connect()
             try:
+                row = conn.execute(
+                    "SELECT scope FROM olympus_knowledge WHERE id = ?",
+                    (fact_id,),
+                ).fetchone()
+                if row is None:
+                    return {"status": "deleted", "rows_affected": 0}
+                if self.allowed_scopes is not None and row["scope"] not in self.allowed_scopes:
+                    return {"error": f"Agent not authorized to delete fact in scope '{row['scope']}'"}
                 cursor = conn.execute(
                     "DELETE FROM olympus_knowledge WHERE id = ?",
                     (fact_id,),
@@ -131,18 +141,4 @@ class ShareKnowledgeTool:
             finally:
                 conn.close()
 
-        if not fact:
-            return {"error": "id or fact is required for delete action"}
-
-        conn = self._connect()
-        try:
-            cursor = conn.execute(
-                "DELETE FROM olympus_knowledge WHERE scope = ? AND domain = ? AND fact = ?",
-                (scope, domain, fact),
-            )
-            conn.commit()
-            return {"status": "deleted", "rows_affected": cursor.rowcount}
-        except sqlite3.Error as e:
-            return {"error": str(e)}
-        finally:
-            conn.close()
+        return {"error": "delete by fact text is deprecated — use id instead"}

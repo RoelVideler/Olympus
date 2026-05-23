@@ -40,7 +40,7 @@ CREATE TRIGGER IF NOT EXISTS olympus_knowledge_au AFTER UPDATE ON olympus_knowle
 END;
 
 CREATE TRIGGER IF NOT EXISTS olympus_knowledge_updated_at AFTER UPDATE ON olympus_knowledge
-    WHEN old.fact != new.fact OR old.domain != new.domain OR old.scope != new.domain
+    WHEN old.fact != new.fact OR old.domain != new.domain OR old.scope != new.scope
     OR old.confidence != new.confidence OR old.source_profile != new.source_profile BEGIN
     UPDATE olympus_knowledge SET updated_at = datetime('now') WHERE rowid = new.rowid;
 END;
