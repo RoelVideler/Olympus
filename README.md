@@ -44,7 +44,7 @@ hermes -p <name> chat                     # Interactive chat
 hermes -p <name> -z "Your prompt"         # One-shot query
 ```
 
-See `scripts/setup_hermes.py` for detailed Hermes Agent discovery findings.
+See `docs/hermes-discovery.md` for detailed Hermes Agent discovery findings.
 
 ## Install Olympus
 
