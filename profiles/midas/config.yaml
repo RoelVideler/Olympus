@@ -1,0 +1,12 @@
+# Midas: Finance — invoicing, expenses, budget
+model:
+  provider: openai-compatible
+  base_url: http://localhost:11434/v1
+  model: qwen3.6-8b
+
+toolsets:
+  - web
+  - memory
+
+agent:
+  max_turns: 15

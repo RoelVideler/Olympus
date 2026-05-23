@@ -1,0 +1,13 @@
+# Hephaestus: Home automation, devices, maintenance
+model:
+  provider: openai-compatible
+  base_url: http://localhost:11434/v1
+  model: qwen3.6-8b
+
+toolsets:
+  - web
+  - memory
+  - homeassistant
+
+agent:
+  max_turns: 15

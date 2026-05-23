@@ -1,0 +1,14 @@
+# Apollo: Creative — photography, art, events
+model:
+  provider: openai-compatible
+  base_url: http://localhost:11434/v1
+  model: qwen3.6-8b
+
+toolsets:
+  - web
+  - memory
+  - vision
+  - image_gen
+
+agent:
+  max_turns: 20
