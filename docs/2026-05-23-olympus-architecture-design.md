@@ -2,9 +2,15 @@
 
 ## Overview
 
-Olympus is a personal AI life assistant — the successor to TheTemple. Built on **Nous Research's Hermes Agent** as the core runtime, Olympus replaces TheTemple's custom agent infrastructure with Hermes' mature agent loop, provider resolution, tool system, memory, and self-evolution capabilities.
+Olympus is a personal AI life assistant — the successor to TheTemple. Built as a **collection of Hermes Agent plugins**, Olympus extends Hermes' native capabilities with multi-agent orchestration, cross-agent knowledge sharing, and process lifecycle management.
 
-Each Olympus "god" runs as a **Hermes Agent profile** (`hermes -p <profile>`), giving full isolation of config, memory, tools, and session storage. Zeus, the orchestrator, routes tasks across profiles and manages the conversation lifecycle.
+Each Olympus "god" runs as a **Hermes Agent profile** (`hermes -p <profile>`), giving full isolation of config, memory, tools, and session storage. Olympus plugins extend Hermes with:
+- **Zeus plugin**: Routing, chip-in coordination, and conversation management (runs as a Hermes profile with custom skills)
+- **share_knowledge plugin**: Cross-agent knowledge sharing via shared SQLite with scope enforcement
+- **Supervisor plugin**: Process lifecycle management (starts/stops profiles based on `run_mode`)
+- **Revolt plugin**: Revolt messaging platform adapter for Hermes gateway
+
+This approach leverages Hermes' existing architecture (kanban for task dispatch, MCP for communication, cron for scheduling, gateway for messaging) rather than building a separate platform on top.
 
 ## Problem Statement
 
@@ -14,10 +20,10 @@ Olympus adopts Hermes Agent as the runtime to eliminate infrastructure debt and 
 
 ### Design Constraint: Hermes-Native with Escape Hatch
 
-The Hermes-native principle (adopt, don't wrap) is the fastest path to a working system. However, the architecture should maintain modularity at integration boundaries (gateway → Zeus, Zeus → profiles, tools → external APIs) so that moving away from Hermes Agent is feasible if needed. This means:
-- The gateway communicates with Zeus via Hermes' ACP/MCP, not custom protocols
-- The Supervisor manages profile lifecycle but doesn't depend on Hermes internals
-- Domain tools are Hermes plugins but expose clean interfaces that could be reimplemented in another runtime
+Olympus is built as Hermes plugins — we extend Hermes' architecture, not replace it. However, the architecture should maintain modularity at integration boundaries (gateway → Zeus, Zeus → profiles, tools → external APIs) so that moving away from Hermes Agent is feasible if needed. This means:
+- Plugins communicate via Hermes' native mechanisms (kanban, MCP, CLI), not custom protocols
+- Domain tools expose clean interfaces that could be reimplemented in another runtime
+- Profile configs are standard Hermes YAML, not custom format
 
 ## Principles
 
@@ -55,32 +61,33 @@ The Hermes-native principle (adopt, don't wrap) is the fastest path to a working
 User (Dashboard / CLI / Revolt)
         │
         ▼
-┌─────────────────────────────────────┐
-│  Gateway (Express, data APIs)       │
-│  - POST /api/chat → Zeus (ACP/MCP)  │
-│  - REST/GraphQL for dashboard data  │
-│  - WebSocket for streaming          │
-└──────────────┬──────────────────────┘
+┌─────────────────────────────────────────────┐
+│  Hermes Gateway                             │
+│  - Revolt plugin (messaging platform)       │
+│  - Dashboard plugin (REST/GraphQL/WebSocket)│
+│  - Supervisor plugin (profile lifecycle)    │
+└──────────────┬──────────────────────────────┘
                │
                ▼
 ┌──────────────────────────────────────────────────┐
-│              Zeus (always-on)                    │
-│  Hermes profile : ACP/MCP interface              │
+│              Zeus (always-on profile)            │
+│  Hermes profile + Zeus plugin skills             │
 │  - Receives all user messages                    │
 │  - Top-down: routes known-domain queries to profiles │
 │  - Listens for chip-ins from agents with relevant domain knowledge │
 │  - Coordinates chip-in responses, resolves conflicts, summarizes │
+│  - Uses Hermes kanban for task dispatch to profiles │
 └────┬──────┬──────┬──────┬──────┬──────┬──────┬───┘
      │      │      │      │      │      │      │
      ▼      ▼      ▼      ▼      ▼      ▼      ▼
    Chron  Iaso  Hermes Philia Plutus Heph   Metis  Apollo  Midas
-    (on-demand profiles, ACP/MCP per profile)
-                                                       │
-                                    Business cluster — Zeus routes directly
-                                    to all 3 as peers (no sub-orchestrator)
+    (on-demand profiles, started/stopped by Supervisor plugin)
+                                                        │
+                                     Business cluster — Zeus routes directly
+                                     to all 3 as peers (no sub-orchestrator)
 ```
 
-Each agent exposes its interface through Hermes' native ACP (Agent Communication Protocol) or MCP (Model Context Protocol). Zeus communicates with profiles via these native interfaces — no HTTP shim, no OpenAI-compatible wrapper. For ACP, Zeus sends structured requests to profile endpoints and receives structured responses. For MCP, profiles expose tools that Zeus can invoke. This keeps the architecture Hermes-native without building custom protocol adapters.
+Olympus is a set of Hermes plugins installed into the Hermes runtime. Zeus is a Hermes profile with custom skills for routing and chip-in coordination. The Supervisor is a Hermes gateway extension that manages profile lifecycle. Cross-agent knowledge flows through the share_knowledge plugin accessing a shared SQLite database.
 
 ## Deployment Model
 
@@ -96,12 +103,15 @@ Each profile has a `run_mode` property controlling lifecycle:
 
 ### Process Management
 
-A lightweight **Olympus Supervisor** may manage Hermes profile processes. **Deferred to Phase 2** — after Phase 1's Hermes capability assessment. If Hermes' gateway handles multi-profile lifecycle natively, the Supervisor is dropped. If needed, it will be a simple Python script (not a REST API service) that:
+The **Olympus Supervisor plugin** extends Hermes' gateway with profile lifecycle management:
 
-- Starts profiles based on `run_mode`
-- Monitors health
+- Starts profiles based on `run_mode` configuration
+- Monitors profile health (process liveness, not just gateway PID)
 - Kills idle on-demand profiles after configurable timeout
 - Restarts crashed profiles
+- Exposes an API that Zeus can call for profile lifecycle operations
+
+Implementation: A Hermes gateway extension that reads `run_mode` from profile configs and manages profile processes. Runs as part of the Hermes gateway process, not a separate service.
 
 ## Memory Architecture
 
@@ -272,12 +282,13 @@ Changes from TheTemple gateway:
 This is a clean build, not a migration. TheTemple's code stays in its repo. Olympus starts with:
 ```
 /Users/roelvideler/openspec/Olympus/
+├── plugins/            # Olympus Hermes plugins
+│   ├── zeus/               # Routing, chip-in coordination skills
+│   ├── share_knowledge/    # Cross-agent knowledge sharing
+│   ├── supervisor/         # Profile lifecycle management
+│   └── revolt/             # Revolt messaging platform adapter
 ├── profiles/           # Hermes profile configs per agent
-├── tools/              # Custom Hermes tool plugins
-├── supervisor/         # Process manager for profiles
-├── gateway/            # Express proxy (minimal)
 ├── schema/             # SQLite migration files
-├── docker/             # Docker Compose for stack
 └── docs/               # Architecture and ops docs
 ```
 
@@ -285,26 +296,29 @@ This is a clean build, not a migration. TheTemple's code stays in its repo. Olym
 
 ### Phase 1: Foundation
 - Install Hermes Agent, create all 10 profiles
-- Build custom tool plugins for domain integrations
+- Build Olympus plugins: zeus, share_knowledge, supervisor, revolt
 - Set up shared SQLite schema + `share_knowledge` tool
-- Verify each profile boots independently
-- **Decision point**: Evaluate Hermes' gateway capabilities — does it handle multi-profile management, health monitoring, and scheduling? If yes, drop the Supervisor. If no, plan Supervisor for Phase 2.
+- Verify all profiles boot independently
+- Verify all plugins load correctly in Hermes
 
 **Success criteria:**
-- All 10 profiles boot and respond to a basic prompt via Hermes' native ACP/MCP interface without errors
+- All 10 profiles boot and respond to a basic prompt via Hermes' native interface without errors
+- All 4 Olympus plugins load correctly in Hermes (`hermes plugins list` shows them as enabled)
 - `share_knowledge` tool: write from one profile, read from another, verify round-trip against shared SQLite
+- Supervisor plugin starts/stops profiles based on `run_mode` configuration
 
 ### Phase 2: Zeus Online
-- Zeus as always-on profile using Hermes' native interface
-- Gateway forwards chat to Zeus
+- Zeus profile online with Zeus plugin skills (routing, chip-in coordination)
+- Hermes gateway forwards chat to Zeus via Revolt plugin
 - Dashboard works end-to-end through Zeus
 - All non-routed queries handled by Zeus directly (no delegation yet)
-- If Hermes doesn't handle lifecycle: build Olympus Supervisor (simple Python script)
+- Supervisor plugin manages profile lifecycle
 
 **Success criteria:**
 - Zeus answers 10 diverse, random questions directly without errors or crashes
-- Dashboard chat: user types message → gateway → Zeus → response renders on screen
+- Dashboard chat: user types message → Hermes gateway → Zeus → response renders on screen
 - Chat endpoint + 3-5 critical data endpoints return correct data (defer remaining dashboard endpoints to Phase 3+)
+- Supervisor plugin starts/stops profiles correctly based on `run_mode`
 
 ### Phase 3: Specialized Profiles
 - Chronos, Iaso online (always-on + on-demand)
@@ -394,7 +408,8 @@ External APIs (Gmail, Withings, Google Calendar, Home Assistant) can be down, ra
 
 ## Open Questions
 
-- **Hermes ACP/MCP interface details**: What exactly does Hermes' ACP protocol look like? How does Zeus send requests to profiles and receive responses? Must be answered in Phase 1 after Hermes installation.
+- **Zeus plugin skill design**: How much of the chip-in algorithm lives in Zeus' system prompt vs. custom Hermes skills? Must be designed before Phase 2 — it is the core architectural commitment of the multi-agent system.
 - **Agent onboarding**: TheTemple's agents never worked properly partly because they lacked proper onboarding — they didn't know the user or their needs. How does each profile learn about the user? `USER.md` files? Structured onboarding flow? Must be designed before Phase 2.
 - **Listen-in model selection**: The 3-tier chip-in pipeline uses ultralight → heavy → response. Which specific models run at each tier? What's the compute cost of running N ultralight models in parallel? Must be benchmarked in Phase 3.
 - **Hermes name collision**: The messenger agent shares its name with the Hermes Agent runtime. This will cause confusion in docs, configs, and conversation. Consider renaming the messenger agent (e.g., "Angelos" — Greek for messenger).
+- **Supervisor plugin API**: Does Hermes' gateway extension API support process lifecycle management? Must be verified in Phase 1 before building the Supervisor plugin.
