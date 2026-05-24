@@ -1,0 +1,12 @@
+{
+  "name": "olympus",
+  "label": "Olympus",
+  "description": "Olympus dashboard — health, wiki, calendar, contacts, preferences, and real-time streaming for the personal AI life assistant.",
+  "icon": "Globe",
+  "version": "1.0.0",
+  "tab": {
+    "path": "/olympus",
+    "position": "after:skills"
+  },
+  "api": "plugin_api.py"
+}
