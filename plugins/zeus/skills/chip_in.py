@@ -121,9 +121,12 @@ def handle_chip_in(args: dict, **kw) -> dict[str, Any]:
     # event loop). asyncio.run() raises RuntimeError in that case.
     try:
         asyncio.get_running_loop()
-        # In async context — run the coroutine in a thread pool
-        loop = asyncio.get_event_loop()
-        results = loop.run_until_complete(_run())
+        # In async context — run the coroutine in a new thread to avoid
+        # "event loop already running" error from run_until_complete().
+        import concurrent.futures
+        with concurrent.futures.ThreadPoolExecutor() as executor:
+            future = executor.submit(asyncio.run, _run())
+            results = future.result(timeout=timeout + 5)
     except RuntimeError:
         # No running loop — safe to use asyncio.run()
         results = asyncio.run(_run())

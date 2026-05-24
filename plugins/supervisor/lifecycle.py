@@ -50,6 +50,7 @@ def _pid_file(profile: str) -> Path:
 
 
 def _config_file(profile: str) -> Optional[Path]:
+    _validate_profile_name(profile)
     candidate = _PROFILES_DIR / profile / "config.yaml"
     if candidate.is_file():
         return candidate

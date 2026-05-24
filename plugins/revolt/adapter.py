@@ -197,6 +197,8 @@ class RevoltAdapter(BasePlatformAdapter):
                 await self._client.handle_events(self._on_revolt_event)
                 # Successful connection — reset retry counter
                 self._error_handler.reset()
+                # Brief delay on clean disconnect to avoid rapid reconnect loops
+                await asyncio.sleep(1)
             except asyncio.CancelledError:
                 return
             except Exception as e:

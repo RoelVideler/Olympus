@@ -214,13 +214,16 @@ def get_preferences():
 
 
 # Deferred endpoints (501)
-for _path in DEFERRED_ENDPOINTS:
-    @router.get(_path)
-    def not_implemented():
+def _make_not_implemented(path: str):
+    def handler():
         raise HTTPException(
             status_code=501,
-            detail=f"{_path} is planned for Phase 3+",
+            detail=f"{path} is planned for Phase 3+",
         )
+    return handler
+
+for _path in DEFERRED_ENDPOINTS:
+    router.get(_path)(_make_not_implemented(_path))
 
 
 # ---------------------------------------------------------------------------
@@ -328,13 +331,16 @@ def _check_ws_token(provided: Optional[str]) -> bool:
     """Constant-time compare against the dashboard session token."""
     if not provided:
         return False
+    # Allow unauthenticated connections only in explicit test mode
+    if os.environ.get("HERMES_TEST_MODE"):
+        return True
     try:
         from hermes_cli import web_server as _ws
     except Exception:
-        return True  # No dashboard context (tests)
+        return False  # Deny when auth infrastructure unavailable
     expected = getattr(_ws, "_SESSION_TOKEN", None)
     if not expected:
-        return True
+        return False  # Deny when no session token configured
     return hmac.compare_digest(str(provided), str(expected))
 
 
