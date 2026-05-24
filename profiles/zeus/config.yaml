@@ -21,6 +21,7 @@ toolsets:
   - delegation
   - share_knowledge
   - zeus
+  - supervisor
 
 # Memory uses Hermes defaults (memory_enabled: true, provider: local).
 # Configure external memory provider via `hermes memory` if needed.

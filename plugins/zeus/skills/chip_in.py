@@ -117,7 +117,16 @@ def handle_chip_in(args: dict, **kw) -> dict[str, Any]:
         ]
         return await asyncio.gather(*tasks)
 
-    results = asyncio.run(_run())
+    # Detect if we're already in an async context (e.g., called from Hermes'
+    # event loop). asyncio.run() raises RuntimeError in that case.
+    try:
+        asyncio.get_running_loop()
+        # In async context — run the coroutine in a thread pool
+        loop = asyncio.get_event_loop()
+        results = loop.run_until_complete(_run())
+    except RuntimeError:
+        # No running loop — safe to use asyncio.run()
+        results = asyncio.run(_run())
 
     chip_ins = [
         r for r in results
