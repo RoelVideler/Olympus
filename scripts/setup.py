@@ -170,10 +170,6 @@ def phase3_plugins() -> None:
             log("3/4", f"Plugin '{name}' already installed — skipping")
             continue
 
-        if dest.is_symlink():
-            log("3/4", f"Plugin '{name}' is a symlink — preserving")
-            continue
-
         # Copy plugin
         if src.is_dir():
             shutil.copytree(src, dest)
@@ -221,7 +217,10 @@ def phase4_verification() -> None:
         conn = sqlite3.connect(str(DB_PATH))
         count = conn.execute("SELECT COUNT(*) FROM agent_profiles").fetchone()[0]
         conn.close()
-        log("4/4", f"Database: {count} agent profiles")
+        if count == 10:
+            log("4/4", f"Database: {count} agent profiles")
+        else:
+            log("4/4", f"WARNING: Database has {count} agent profiles (expected 10)")
     else:
         log("4/4", "WARNING: Database not found")
 
