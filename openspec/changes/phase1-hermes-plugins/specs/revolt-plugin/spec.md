@@ -35,3 +35,19 @@ The Revolt adapter SHALL route messages to the correct Hermes profile based on c
 #### Scenario: Default routing to Zeus
 - **WHEN** a message arrives and no specific routing rule applies
 - **THEN** the message is routed to the Zeus profile
+
+### Requirement: Revolt adapter handles connection errors
+
+The Revolt adapter SHALL handle connection failures gracefully. If the Revolt server is unreachable, the adapter SHALL retry with exponential backoff and log errors. If authentication fails, the adapter SHALL stop retrying and log the error.
+
+#### Scenario: Revolt server is unreachable
+- **WHEN** the Revolt server is unreachable on startup
+- **THEN** the adapter retries with exponential backoff and logs the error
+
+#### Scenario: Authentication fails
+- **WHEN** the bot token is invalid or expired
+- **THEN** the adapter stops retrying and logs an authentication error
+
+#### Scenario: Rate limit exceeded
+- **WHEN** the Revolt API returns a rate limit error
+- **THEN** the adapter waits for the rate limit window and retries

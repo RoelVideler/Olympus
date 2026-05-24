@@ -10,7 +10,7 @@ The Zeus orchestrator SHALL run as a Hermes Agent profile (`hermes -p zeus`) wit
 
 #### Scenario: Zeus routes a known-domain query
 - **WHEN** Zeus receives a user message that matches a known domain (e.g., scheduling, health)
-- **THEN** Zeus dispatches a task to the appropriate specialist profile via Hermes kanban
+- **THEN** Zeus polls the appropriate specialist profile with a lightweight model call and incorporates the response
 
 #### Scenario: Zeus handles an unknown query
 - **WHEN** Zeus receives a user message that does not match any known domain
@@ -43,3 +43,15 @@ Zeus SHALL maintain conversation context across message exchanges, including use
 #### Scenario: Zeus references prior conversation
 - **WHEN** Zeus responds to a user message
 - **THEN** Zeus includes relevant context from prior messages in the conversation
+
+### Requirement: Zeus polling latency stays under 2 seconds per profile
+
+Zeus SHALL complete each polling call to a specialist profile in under 2 seconds. Total polling time across all profiles SHALL stay under 10 seconds for a 5-profile poll.
+
+#### Scenario: Single profile poll completes quickly
+- **WHEN** Zeus polls a single specialist profile
+- **THEN** the poll completes in under 2 seconds
+
+#### Scenario: Multi-profile poll completes within budget
+- **WHEN** Zeus polls 5 specialist profiles
+- **THEN** the total polling time stays under 10 seconds

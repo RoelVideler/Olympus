@@ -42,16 +42,19 @@ The Supervisor extends Hermes' gateway with profile lifecycle management. It rea
 - Separate Python process (original approach) — requires custom IPC, duplicates gateway's process management
 - Hermes built-in lifecycle — Hermes doesn't have native on-demand profile lifecycle
 
-### Decision 3: Cross-profile communication via Hermes kanban
+### Decision 3: Cross-profile communication via polling and Hermes kanban
 
-Zeus dispatches tasks to specialist profiles using Hermes' kanban system. Profiles claim tasks atomically and execute in isolated workspaces.
+Zeus uses two communication mechanisms with specialist profiles:
+- **Polling for chip-in**: After receiving a user message, Zeus polls specialist profiles with lightweight model calls to check for domain relevance. Each profile responds with a relevance score and optional insight.
+- **Kanban for task dispatch**: Zeus dispatches structured tasks to specialist profiles using Hermes' kanban system. Profiles claim tasks atomically and execute in isolated workspaces.
 
-**Why:** Kanban is Hermes' native cross-profile task dispatch mechanism. It provides atomic task claiming, dependency tracking, and isolated execution — exactly what Zeus needs for routing.
+**Why:** Polling solves the chip-in problem (all agents need to evaluate every message) without requiring a broadcast mechanism. Kanban solves the task dispatch problem (structured work with tracking and atomic claiming).
 
 **Alternatives considered:**
 - Custom ACP/MCP adapters (original approach) — duplicates Hermes' native communication
 - Direct CLI calls (`hermes -p <name> -z <prompt>`) — no task tracking, no atomic claiming
 - Shared database polling — race conditions, no atomic claiming
+- Broadcast mechanism — Hermes has no native broadcast; would require custom plugin
 
 ### Decision 4: Revolt and Dashboard as gateway platform adapters
 
@@ -74,7 +77,7 @@ The share_knowledge plugin already works as a Hermes plugin with scope enforceme
 | Risk | Mitigation |
 |------|------------|
 | Hermes plugin API changes between versions | Pin Hermes version, test plugin compatibility on each Hermes update |
-| Kanban may not support real-time chip-in coordination | Fallback to MCP tool calls for time-sensitive chip-ins |
+| Polling latency exceeds 2s per profile | Use lightweight models for polling, parallelize polls where possible |
 | Gateway extension API may not support process lifecycle | Build Supervisor as a separate plugin that monitors gateway PID files |
 | Plugin complexity — 5 plugins to maintain | Each plugin has a single responsibility, well-defined interface |
 | Hermes v0.14.0 may have undocumented plugin limitations | Phase 1 includes plugin loading verification for all 5 plugins |

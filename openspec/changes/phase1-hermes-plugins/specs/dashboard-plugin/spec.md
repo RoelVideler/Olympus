@@ -2,7 +2,7 @@
 
 ### Requirement: Dashboard plugin serves REST endpoints
 
-The Dashboard plugin SHALL implement a Hermes gateway platform adapter that serves REST endpoints for the React dashboard. Endpoints SHALL include health data CRUD, wiki, calendar, contacts, preferences, facts, issues, locations, notifications, and models.
+The Dashboard plugin SHALL implement a Hermes gateway platform adapter that serves REST endpoints for the React dashboard. Phase 2 scope includes 5 critical endpoints: health data (`GET /api/health`), wiki (`GET /api/wiki`), calendar (`GET /api/calendar`), contacts (`GET /api/contacts`), and preferences (`GET /api/preferences`). Remaining endpoints are deferred to Phase 3+.
 
 #### Scenario: Dashboard plugin serves health data
 - **WHEN** a client requests `GET /api/health`
@@ -11,6 +11,10 @@ The Dashboard plugin SHALL implement a Hermes gateway platform adapter that serv
 #### Scenario: Dashboard plugin serves wiki data
 - **WHEN** a client requests `GET /api/wiki`
 - **THEN** the plugin returns wiki data from the shared SQLite database
+
+#### Scenario: Deferred endpoint returns not yet implemented
+- **WHEN** a client requests a deferred endpoint (e.g., `GET /api/notifications`)
+- **THEN** the plugin returns a 501 Not Implemented response
 
 ### Requirement: Dashboard plugin serves GraphQL endpoint
 

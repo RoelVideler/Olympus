@@ -43,3 +43,15 @@ The Supervisor SHALL read the `run_mode` field from each profile's `config.yaml`
 #### Scenario: Supervisor reads on-demand config
 - **WHEN** the Supervisor reads a profile config with `run_mode: on-demand`
 - **THEN** the Supervisor waits for a start request before launching the profile
+
+### Requirement: Supervisor falls back to separate plugin if gateway extension API is insufficient
+
+If Hermes' gateway extension API does not support process lifecycle management, the Supervisor SHALL operate as a separate plugin that monitors gateway PID files and manages profile processes independently.
+
+#### Scenario: Gateway extension API supports lifecycle
+- **WHEN** the Supervisor detects Hermes gateway extension API supports process lifecycle
+- **THEN** the Supervisor runs as a gateway extension
+
+#### Scenario: Gateway extension API does not support lifecycle
+- **WHEN** the Supervisor detects Hermes gateway extension API does not support process lifecycle
+- **THEN** the Supervisor runs as a separate plugin that monitors PID files and manages processes
