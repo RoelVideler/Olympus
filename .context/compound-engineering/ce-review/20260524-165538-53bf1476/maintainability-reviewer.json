@@ -1,0 +1,346 @@
+{
+  "reviewer": "maintainability",
+  "findings": [
+    {
+      "title": "graphql.py imports private function _rows_to_dict from api.py",
+      "severity": "P1",
+      "file": "plugins/dashboard/graphql.py",
+      "line": 26,
+      "confidence": 0.95,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "Importing a private (underscore-prefixed) function from another module couples graphql.py to api.py's internal implementation. If api.py renames or removes _rows_to_dict, graphql.py breaks silently. This violates the boundary between modules.",
+      "evidence": [
+        "graphql.py line 26: `from .api import get_db, _rows_to_dict`",
+        "_rows_to_dict is defined as a private helper in api.py line 48"
+      ],
+      "suggested_fix": "Move _rows_to_dict to a shared module (e.g., dashboard/utils.py or dashboard/db.py) and rename to rows_to_dicts (no leading underscore) since it's now a public shared utility. Both api.py and graphql.py import from the shared module."
+    },
+    {
+      "title": "health.py calls lifecycle._clear_pid() — coupling to private internals",
+      "severity": "P1",
+      "file": "plugins/supervisor/health.py",
+      "line": 79,
+      "confidence": 0.95,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "health.py reaches into lifecycle.py's private namespace to call _clear_pid(). This creates a hidden dependency: lifecycle.py's author has no signal that _clear_pid is used externally and may refactor or remove it without breaking health.py's tests.",
+      "evidence": [
+        "health.py line 79: `lifecycle._clear_pid(profile)`",
+        "lifecycle.py line 91: `def _clear_pid(profile: str) -> None:` — private function"
+      ],
+      "suggested_fix": "Make _clear_pid public (rename to clear_pid) or add a public wrapper in lifecycle.py. Alternatively, have list_profiles() or get_profile_status() handle stale PID cleanup internally."
+    },
+    {
+      "title": "idle.py calls lifecycle._config_file() — coupling to private internals",
+      "severity": "P1",
+      "file": "plugins/supervisor/idle.py",
+      "line": 65,
+      "confidence": 0.95,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "Same pattern as the _clear_pid coupling. idle.py depends on lifecycle._config_file() to read per-profile TTL config. This is a hidden cross-module dependency on a private function.",
+      "evidence": [
+        "idle.py line 65: `cfg = lifecycle._config_file(profile)`",
+        "lifecycle.py line 37: `def _config_file(profile: str) -> Optional[Path]:` — private function"
+      ],
+      "suggested_fix": "Make _config_file public (rename to config_file) or expose a get_profile_config(profile) function that returns parsed config data."
+    },
+    {
+      "title": "RevoltMessageRouter is registered but never used — dead abstraction",
+      "severity": "P1",
+      "file": "plugins/revolt/routing.py",
+      "line": 120,
+      "confidence": 0.9,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "routing.py defines a full RevoltMessageRouter class with add_rule, remove_rule, resolve_profile, should_respond, and a module-level singleton get_router(). The adapter imports get_router() (adapter.py line 58) but never calls it. All routing logic is implemented inline in adapter._on_message(). This is 131 lines of dead code that will rot and confuse future developers.",
+      "evidence": [
+        "adapter.py line 58: `from .routing import get_router` — imported but never called",
+        "adapter.py lines 246-262: routing logic is inline in _on_message(), not using the router",
+        "routing.py has 131 lines of unused class and singleton code"
+      ],
+      "suggested_fix": "Either (a) integrate the router into the adapter's message handling path, or (b) delete routing.py entirely and inline the simple 'all messages go to Zeus' logic. If future channel-specific routing is planned, keep the file but add a TODO and use the router in the adapter."
+    },
+    {
+      "title": "RevoltBotIdentity class is defined but never imported or used",
+      "severity": "P2",
+      "file": "plugins/revolt/identity.py",
+      "line": 14,
+      "confidence": 0.95,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "identity.py defines RevoltBotIdentity with name, avatar_url, status, status_text, to_dict(), presence_payload(), and is_configured(). No file in the codebase imports this class. The adapter handles bot identity directly in _set_bot_identity() using raw config values. This is 75 lines of dead code.",
+      "evidence": [
+        "grep for 'RevoltBotIdentity' returns only identity.py itself",
+        "grep for 'from .identity' returns no results",
+        "adapter.py handles identity inline at lines 171-182"
+      ],
+      "suggested_fix": "Delete identity.py. If the identity abstraction is needed later, it can be recreated from git history."
+    },
+    {
+      "title": "GRAPHENE_AVAILABLE is set to True even when import fails — misleading flag",
+      "severity": "P1",
+      "file": "plugins/dashboard/graphql.py",
+      "line": 23,
+      "confidence": 0.95,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "Line 23 sets GRAPHENE_AVAILABLE = True inside the except ImportError block. This means the flag always reports True regardless of whether graphene is installed. While the flag is never checked in current code, this is a latent bug that will mislead any future developer who adds a conditional based on it.",
+      "evidence": [
+        "graphql.py lines 19-24: try/except sets GRAPHENE_AVAILABLE = True in both branches",
+        "GRAPHENE_AVAILABLE is never referenced elsewhere in the file"
+      ],
+      "suggested_fix": "Remove the GRAPHENE_AVAILABLE flag entirely since it's unused. If graphene support is planned, set it to False in the except block."
+    },
+    {
+      "title": "GraphQL 'types' are misleading — not actual GraphQL types, just query namespaces",
+      "severity": "P2",
+      "file": "plugins/dashboard/graphql.py",
+      "line": 29,
+      "confidence": 0.85,
+      "autofix_class": "manual",
+      "owner": "human",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "Classes named HealthType, WikiEntryType, CalendarEventType, ContactType, and PreferencesType suggest GraphQL schema types. They are not. They are namespaces for static methods that run SQL queries. The _execute_query function does string-matching on the query text to determine which 'type' to invoke — this is not GraphQL parsing. Future developers will expect proper GraphQL behavior (field selection, nested queries, type safety) that doesn't exist.",
+      "evidence": [
+        "graphql.py line 29-48: HealthType is a class with a single static resolve() method",
+        "graphql.py lines 124-128: field detection is `if field in query_str` — string containment, not parsing",
+        "The comment on line 18 says 'fall back to manual JSON query parsing' but the fallback IS the only implementation"
+      ],
+      "suggested_fix": "Rename to reflect reality: HealthResolver, WikiResolver, etc. or flatten to module-level functions like resolve_health(), resolve_wiki(). Rename the endpoint from 'graphql' to 'query' or 'combined' to avoid misleading API consumers."
+    },
+    {
+      "title": "supervisor/api.py is a thin pass-through layer with no added value",
+      "severity": "P2",
+      "file": "plugins/supervisor/api.py",
+      "line": 19,
+      "confidence": 0.8,
+      "autofix_class": "manual",
+      "owner": "human",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "Every function in api.py delegates directly to lifecycle.*, health.*, or idle.* with only logging as added behavior. The handlers in __init__.py could call lifecycle/health/idle directly. This adds an unnecessary indirection layer that developers must traverse to understand the code flow.",
+      "evidence": [
+        "api.py start_profile() → lifecycle.start_profile() + logging",
+        "api.py stop_profile() → lifecycle.stop_profile() + logging",
+        "api.py health_check() → lifecycle.get_profile_status() or lifecycle.list_profiles()",
+        "api.py idle_status() → idle.check_idle() or idle.enforce_idle_ttl()",
+        "api.py enforce_idle(), get_profile_info(), list_all() are never called from anywhere"
+      ],
+      "suggested_fix": "Either (a) fold the logging into the lifecycle/health/idle modules directly, or (b) keep api.py but document that it's the logging facade. Remove enforce_idle(), get_profile_info(), and list_all() since they're dead code."
+    },
+    {
+      "title": "idle_status() has side effects — calls enforce_idle_ttl() which kills profiles",
+      "severity": "P1",
+      "file": "plugins/supervisor/api.py",
+      "line": 74,
+      "confidence": 0.9,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "The function is named idle_status() which implies a read-only query. But when called without a profile argument, it calls idle.enforce_idle_ttl() which actively kills profiles that have exceeded their TTL. A developer calling idle_status() expecting read-only behavior will inadvertently terminate running profiles.",
+      "evidence": [
+        "api.py line 75: `return idle.enforce_idle_ttl()` — has side effects (stops profiles)",
+        "idle.py lines 99-131: enforce_idle_ttl() calls lifecycle.stop_profile() for exceeded profiles",
+        "Function docstring says 'Check idle status' — implies read-only"
+      ],
+      "suggested_fix": "Split into two functions: idle_status() (read-only, returns idle times) and enforce_idle() (has side effects, kills expired profiles). The handler in __init__.py should call the appropriate one."
+    },
+    {
+      "title": "Three functions in revolt/adapter.py check for bot token with overlapping logic",
+      "severity": "P2",
+      "file": "plugins/revolt/adapter.py",
+      "line": 67,
+      "confidence": 0.9,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "check_requirements(), validate_config(), and is_connected() all check for the presence of a bot token from env or config. They have slightly different signatures and return types (bool vs bool vs bool) but the core logic is identical. This is duplication that will drift when the token-checking logic needs to change.",
+      "evidence": [
+        "adapter.py lines 67-72: check_requirements() — checks env var",
+        "adapter.py lines 75-79: validate_config() — checks config.extra or env var",
+        "adapter.py lines 82-86: is_connected() — checks env var or config.extra",
+        "All three return bool(token)"
+      ],
+      "suggested_fix": "Create a single _has_bot_token(config) helper and have all three functions call it. Or consolidate into one function if the gateway framework allows."
+    },
+    {
+      "title": "SPECIALIST_PROFILES list duplicated in routing.py and chip_in.py",
+      "severity": "P2",
+      "file": "plugins/zeus/skills/routing.py",
+      "line": 74,
+      "confidence": 0.95,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The same list of 8 specialist profiles is defined in both routing.py (line 74) and chip_in.py (line 40). When a new specialist profile is added, both files must be updated. This is copy-paste duplication that will inevitably drift.",
+      "evidence": [
+        "routing.py lines 74-83: SPECIALIST_PROFILES = ['chronos', 'iaso', ...]",
+        "chip_in.py lines 40-49: SPECIALIST_PROFILES = ['chronos', 'iaso', ...]",
+        "Both lists are identical"
+      ],
+      "suggested_fix": "Move SPECIALIST_PROFILES to a shared constants file (e.g., zeus/constants.py or zeus/__init__.py) and import it in both modules."
+    },
+    {
+      "title": "hermes_available() duplicated in test_integration.py and test_profile_boot.py",
+      "severity": "P3",
+      "file": "tests/test_integration.py",
+      "line": 35,
+      "confidence": 0.9,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The hermes_available() function is defined identically in both test files. This is minor test duplication but will cause maintenance friction if the check logic needs to change.",
+      "evidence": [
+        "test_integration.py lines 35-41: hermes_available() definition",
+        "test_profile_boot.py lines 13-18: identical hermes_available() definition"
+      ],
+      "suggested_fix": "Move to a conftest.py or tests/utils.py and import in both test files."
+    },
+    {
+      "title": "Dashboard SQL queries duplicated between REST handlers and GraphQL resolvers",
+      "severity": "P2",
+      "file": "plugins/dashboard/api.py",
+      "line": 63,
+      "confidence": 0.85,
+      "autofix_class": "manual",
+      "owner": "human",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The health, wiki, calendar, contacts, and preferences queries exist in both api.py (REST handlers) and graphql.py (GraphQL resolvers) with nearly identical SQL. When the schema changes, both copies must be updated. This is structural duplication that will cause bugs when one copy is updated and the other is forgotten.",
+      "evidence": [
+        "api.py lines 65-68: health query for agent_profiles",
+        "graphql.py lines 36-39: identical health query",
+        "api.py lines 103-113: wiki query with domain/scope filtering",
+        "graphql.py lines 56-64: identical wiki query",
+        "Same pattern for calendar, contacts, and preferences"
+      ],
+      "suggested_fix": "Extract query logic into a shared data access layer (e.g., dashboard/queries.py or dashboard/repository.py). Both REST handlers and GraphQL resolvers import from this layer."
+    },
+    {
+      "title": "supervisor/api.py has three dead functions: enforce_idle, get_profile_info, list_all",
+      "severity": "P2",
+      "file": "plugins/supervisor/api.py",
+      "line": 78,
+      "confidence": 0.9,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "enforce_idle(), get_profile_info(), and list_all() are defined in api.py but never imported or called from __init__.py or any other module. They are dead code that adds maintenance burden.",
+      "evidence": [
+        "api.py lines 78-80: enforce_idle() — never called",
+        "api.py lines 83-99: get_profile_info() — never called",
+        "api.py lines 102-108: list_all() — never called",
+        "__init__.py only imports start_profile, stop_profile, health_check, idle_status from api"
+      ],
+      "suggested_fix": "Delete these three functions. They can be restored from git history if needed later."
+    },
+    {
+      "title": "auth.py module-level secret generation has side effects on import",
+      "severity": "P2",
+      "file": "plugins/dashboard/auth.py",
+      "line": 43,
+      "confidence": 0.8,
+      "autofix_class": "manual",
+      "owner": "human",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "Line 43: `_SECRET = _generate_secret()` runs at module import time. This creates a file on disk (~/.hermes/.dashboard_secret) just from importing the module. This makes testing harder (tests create side-effect files), and means the module cannot be imported without filesystem access.",
+      "evidence": [
+        "auth.py line 43: module-level assignment calls _generate_secret()",
+        "_generate_secret() at lines 27-40 creates files and directories on disk"
+      ],
+      "suggested_fix": "Use lazy initialization: _SECRET = None, and resolve it in _sign() and _verify() on first use. Or use a get_secret() function with caching."
+    },
+    {
+      "title": "Deferred endpoints return 501 only after auth passes — leaks endpoint existence",
+      "severity": "P3",
+      "file": "plugins/dashboard/api.py",
+      "line": 224,
+      "confidence": 0.7,
+      "autofix_class": "manual",
+      "owner": "human",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "DEFERRED_ENDPOINTS are registered as routes that return 501 Not Implemented. But they go through auth_middleware first, so unauthenticated users get 401 instead of 501. This leaks information: an attacker can determine which endpoints exist (401) vs which don't exist (404). For a local-only dashboard this is low risk, but the pattern is worth noting.",
+      "evidence": [
+        "api.py lines 26-35: DEFERRED_ENDPOINTS set with 8 paths",
+        "api.py lines 224-225: routes registered for deferred endpoints",
+        "__init__.py line 45: auth_middleware is applied to all routes"
+      ],
+      "suggested_fix": "Either exclude deferred endpoints from auth middleware, or register them before the middleware is applied. Or accept the current behavior as acceptable for a local-only service."
+    },
+    {
+      "title": "seed_data.py duplicates schema definition from share_knowledge/schema/001_initial.sql",
+      "severity": "P2",
+      "file": "plugins/dashboard/seed_data.py",
+      "line": 27,
+      "confidence": 0.9,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "seed_data.py defines the full database schema inline in ensure_schema() (lines 27-77). The same schema exists in share_knowledge/schema/001_initial.sql. When the schema changes, both copies must be updated. The seed_data schema also includes additional CHECK constraints that may or may not match the canonical schema.",
+      "evidence": [
+        "seed_data.py lines 27-77: full CREATE TABLE statements for 5 tables",
+        "share_knowledge/schema/001_initial.sql: canonical schema definition",
+        "Both define olympus_knowledge, agent_profiles, calendar_events, contacts, preferences"
+      ],
+      "suggested_fix": "Have seed_data.py read and execute the canonical schema file from share_knowledge/schema/001_initial.sql instead of duplicating the DDL."
+    },
+    {
+      "title": "revolt/error_handler.py parse_retry_after uses late import of re",
+      "severity": "P3",
+      "file": "plugins/revolt/error_handler.py",
+      "line": 88,
+      "confidence": 0.85,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The `import re` statement is inside the parse_retry_after function (line 88) rather than at module level. This is unusual and suggests the import was added as an afterthought. It also means the import happens on every call to parse_retry_after.",
+      "evidence": [
+        "error_handler.py line 88: `import re` inside function body",
+        "No other imports in the file are deferred"
+      ],
+      "suggested_fix": "Move `import re` to the top of the file with other imports."
+    }
+  ],
+  "residual_risks": [
+    "The fake GraphQL endpoint (graphql.py) may mislead frontend developers into expecting proper GraphQL features like field selection, nested queries, and type safety. If a frontend is built against this endpoint, it will need to be rewritten when real GraphQL is added.",
+    "The auth middleware's first-login race condition (two simultaneous login requests before password file exists) could result in an unpredictable password being set. For a single-user local dashboard this is low risk but worth documenting.",
+    "The supervisor's health monitor and idle enforcer run as daemon threads with no graceful shutdown path from the plugin system. If Hermes exits without calling stop(), these threads may prevent clean process termination.",
+    "The chip_in skill uses asyncio.run() inside a synchronous handler (handle_chip_in). If called from an already-running event loop, this will raise RuntimeError. This is a correctness issue that also affects maintainability — future developers adding async support will hit this.",
+    "Database connections in dashboard/api.py are opened and closed per-request with no connection pooling. Under concurrent load (multiple WebSocket clients + REST requests), this could exhaust SQLite's connection limits."
+  ],
+  "testing_gaps": [
+    "No tests exercise the auth middleware — login flow, session validation, expired sessions, invalid signatures, or the first-login password setup path.",
+    "No tests for the WebSocket hub — connect/disconnect lifecycle, broadcast to multiple clients, dead connection cleanup.",
+    "No tests for the GraphQL endpoint — query parsing, field selection, error handling, or the graphene fallback path.",
+    "No tests for the revolt adapter's message handling — bot self-message filtering, channel type detection, typing indicator failures.",
+    "No tests for the supervisor lifecycle — start/stop profile, PID file management, crash detection, always-on auto-restart.",
+    "No tests for the idle enforcer — TTL calculation, profile killing, state file persistence.",
+    "No tests for the zeus routing skill — domain detection, specialist polling, fallback behavior.",
+    "No tests for the zeus chip_in skill — parallel polling, threshold filtering, JSON parsing failures.",
+    "The test_share_knowledge.py uses a local ShareKnowledgeTool wrapper class instead of testing the actual tools.py implementation, so scope enforcement and profile identity logic in the real code are untested."
+  ]
+}

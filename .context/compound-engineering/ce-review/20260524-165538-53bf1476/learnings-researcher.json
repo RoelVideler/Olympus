@@ -1,0 +1,140 @@
+{
+  "findings": [
+    {
+      "source": "docs/phase1-hermes-assessment.md",
+      "topic": "Supervisor Plugin — Hermes lacks native multi-profile management",
+      "summary": "Hermes Agent v0.14.0 does NOT support multi-profile lifecycle management. Each profile runs its own independent gateway process. There is no on-demand startup, idle TTL, cross-profile health monitoring, or programmatic lifecycle API. The Supervisor must be built as a separate Python process that starts/stops profiles via CLI, monitors process liveness, and exposes an API for Zeus to call.",
+      "key_insight": "Hermes gateway is a messaging platform integration service, NOT a multi-profile orchestrator. The Supervisor cannot be a Hermes gateway extension as originally planned — it must be a standalone process. This was a critical architectural pivot discovered during Phase 1 assessment.",
+      "severity": "critical",
+      "relevance_to_pr": "The PR adds a supervisor plugin. The assessment confirms this cannot be a Hermes gateway extension and must manage profiles via CLI subprocess calls (hermes -p <name> ...). Verify the implementation follows this pattern."
+    },
+    {
+      "source": "docs/2026-05-23-olympus-architecture-design.md",
+      "topic": "SQLite Schema with FTS5 for Cross-Agent Knowledge",
+      "summary": "Shared SQLite database with olympus_knowledge table (id, scope, domain, fact, confidence, source_profile, timestamps) and FTS5 virtual table (olympus_knowledge_fts) with triggers for sync. Agent profiles table tracks name, hermes_profile, run_mode, model, status. Scope enforcement is in application logic, not RLS.",
+      "key_insight": "FTS5 content-backed tables require explicit triggers (INSERT/UPDATE/DELETE) to stay in sync. The schema uses content='olympus_knowledge' with content_rowid='rowid' — if rowid handling is incorrect, FTS index will diverge from source table.",
+      "severity": "high",
+      "relevance_to_pr": "The PR adds SQLite schema with FTS5. Verify FTS triggers are correctly implemented and that the content_rowid mapping works with the primary key strategy."
+    },
+    {
+      "source": "docs/2026-05-23-olympus-architecture-design.md",
+      "topic": "Scope Enforcement in share_knowledge Tool",
+      "summary": "Each agent's tool config specifies which scopes it can read/write. Enforcement is in application logic (no RLS). Example: Iaso can write health and read global, but cannot write finance. Prevents compromised profiles from reading/corrupting cross-domain knowledge.",
+      "key_insight": "Scope enforcement is a trust boundary — if the allowed_scopes list is misconfigured or bypassed, agents can access knowledge outside their domain. The tool must enforce this on every call, not just at initialization.",
+      "severity": "high",
+      "relevance_to_pr": "The PR adds share_knowledge plugin. Verify scope enforcement is enforced on every action (write/query/delete), not just at tool construction time."
+    },
+    {
+      "source": "docs/2026-05-23-olympus-architecture-design.md",
+      "topic": "Dashboard Authentication — Single-User Session Cookie Required",
+      "summary": "The dashboard is single-user on localhost but MUST use session cookie authentication — no 'no auth' mode. Use HttpOnly, SameSite=Strict cookies with a locally-generated secret.",
+      "key_insight": "Even for localhost single-user, auth is required. This is a security baseline, not optional. The secret must be locally-generated and persisted.",
+      "severity": "high",
+      "relevance_to_pr": "The PR adds a web dashboard. Verify it implements session cookie auth with HttpOnly/SameSite=Strict, not a no-auth mode."
+    },
+    {
+      "source": "docs/2026-05-23-olympus-architecture-design.md",
+      "topic": "Hermes-Native with Escape Hatch Design Constraint",
+      "summary": "Olympus extends Hermes' architecture, not replaces it. But modularity must be maintained at integration boundaries (gateway → Zeus, Zeus → profiles, tools → external APIs) so that moving away from Hermes Agent is feasible. Plugins communicate via Hermes' native mechanisms (kanban, MCP, CLI), not custom protocols.",
+      "key_insight": "Heavy delegation to Hermes creates lock-in risk. The escape hatch requires clean interfaces at integration boundaries. Domain tools should expose interfaces that could be reimplemented in another runtime.",
+      "severity": "medium",
+      "relevance_to_pr": "The PR adds 5 plugins that integrate deeply with Hermes. Verify each plugin communicates via Hermes' native mechanisms and exposes clean interfaces."
+    },
+    {
+      "source": "docs/2026-05-23-olympus-architecture-design.md",
+      "topic": "Revolt as Hermes Gateway Platform Adapter",
+      "summary": "Revolt integration becomes a Hermes gateway platform adapter, not a custom service. Messages flow from Revolt to Zeus profile, Zeus responses flow back to Revolt.",
+      "key_insight": "Hermes gateway supports Telegram, Discord, WhatsApp, Signal as platform adapters. Revolt must implement the same adapter interface. The gateway is per-profile, so Revolt adapter runs under the Zeus profile's gateway.",
+      "severity": "medium",
+      "relevance_to_pr": "The PR adds a revolt plugin. Verify it implements the Hermes gateway platform adapter interface correctly."
+    },
+    {
+      "source": "docs/hermes-discovery.md",
+      "topic": "Hermes Plugin System Interface",
+      "summary": "Hermes has a plugin system (hermes plugins install/update/remove/list/enable/disable). Plugins are installed from Git repos and provide additional capabilities. Plugin source: hermes_cli/plugins.py, hermes_cli/plugins_cmd.py. Plugins are discovered from ~/.hermes/plugins/ directory.",
+      "key_insight": "Hermes plugins are installed from Git repositories, not local Python packages. The plugin registration mechanism and interface must match what Hermes expects. The exact plugin API (how plugins register tools, skills, gateway adapters) needs to match Hermes' internal expectations.",
+      "severity": "high",
+      "relevance_to_pr": "The PR adds 5 plugins. Verify each plugin follows Hermes' plugin registration interface — the exact API for registering tools, skills, and gateway extensions must match Hermes' expectations."
+    },
+    {
+      "source": "docs/brainstorms/2026-05-24-olympus-as-hermes-plugins.md",
+      "topic": "Zeus as Hermes Profile with Custom Skills",
+      "summary": "Zeus is a Hermes profile with custom skills for routing, chip-in coordination, and conversation management. Zeus runs as hermes -p zeus. Zeus communicates with other profiles via Hermes' native mechanisms (kanban, MCP, or direct CLI).",
+      "key_insight": "Zeus is no longer a custom orchestrator — it's a Hermes profile. The routing and chip-in algorithms live in Zeus' system prompt and custom Hermes skills. The design of how much lives in the prompt vs. skills is an open question flagged for Phase 2.",
+      "severity": "medium",
+      "relevance_to_pr": "The PR adds a zeus plugin. Verify it implements routing and chip-in coordination as Hermes skills, not as a separate orchestrator process."
+    },
+    {
+      "source": "docs/superpowers/plans/2026-05-23-olympus-phase1-foundation.md",
+      "topic": "Phase 1 Success Criteria",
+      "summary": "Phase 1 requires: (1) All 10 profiles boot and respond to basic prompt, (2) share_knowledge tool round-trip works (write from one profile, read from another), (3) Hermes capability assessment completed with Supervisor decision. The plan also originally included 5 plugins loading correctly (zeus, share_knowledge, supervisor, revolt, dashboard) visible via hermes plugins list.",
+      "key_insight": "The success criteria are specific and testable. The share_knowledge round-trip test is the critical integration test — it verifies SQLite schema, tool plugin, and cross-profile access all work together.",
+      "severity": "medium",
+      "relevance_to_pr": "Verify the PR's tests cover all Phase 1 success criteria, especially the share_knowledge round-trip test."
+    }
+  ],
+  "residual_risks": [
+    {
+      "risk": "Hermes plugin API mismatch",
+      "description": "The PR adds 5 plugins but Hermes' exact plugin registration API (how tools, skills, and gateway adapters are registered) may not match what the plugins implement. The discovery docs note the plugin system exists but don't detail the exact registration interface.",
+      "mitigation": "Test each plugin loads via 'hermes plugins list' and that its tools/skills are accessible from profiles."
+    },
+    {
+      "risk": "Supervisor process management reliability",
+      "description": "Since Hermes has no native lifecycle API, the Supervisor must manage profiles via CLI subprocess calls. Process detection, health monitoring, and idle TTL enforcement via PID files and CLI commands may be fragile.",
+      "mitigation": "Test Supervisor with profile crash scenarios, idle timeout, and concurrent start/stop operations."
+    },
+    {
+      "risk": "FTS5 index divergence",
+      "description": "If FTS5 triggers fail or content_rowid mapping is incorrect, the full-text search index will diverge from the source table, returning stale or missing results.",
+      "mitigation": "Add tests that write, update, delete knowledge and verify FTS search returns correct results after each operation."
+    },
+    {
+      "risk": "Scope enforcement bypass",
+      "description": "Scope enforcement is in application logic, not database-level RLS. A bug in the allowed_scopes check could allow cross-scope access.",
+      "mitigation": "Test scope enforcement with agents that have restricted scopes attempting to access unauthorized scopes."
+    },
+    {
+      "risk": "Dashboard auth implementation",
+      "description": "The architecture requires session cookie auth (HttpOnly, SameSite=Strict) even for localhost. If implemented as no-auth, this violates the security baseline.",
+      "mitigation": "Verify dashboard requires authentication and uses proper cookie attributes."
+    },
+    {
+      "risk": "Revolt adapter compatibility",
+      "description": "Hermes gateway supports specific platform adapters (Telegram, Discord, WhatsApp, Signal). Revolt must implement the same interface. If Hermes' adapter API changes or is undocumented, the Revolt plugin may break.",
+      "mitigation": "Test Revolt adapter end-to-end: message from Revolt → Zeus → response back to Revolt."
+    }
+  ],
+  "testing_gaps": [
+    {
+      "gap": "No docs/solutions/ directory exists",
+      "description": "This is a fresh project with no documented past solutions. All learnings come from planning and architecture documents, not from resolved incidents. This means there are no battle-tested patterns to reference — everything is theoretical until tested in production.",
+      "impact": "High — no institutional memory of what has gone wrong before."
+    },
+    {
+      "gap": "No integration tests for plugin loading",
+      "description": "Phase 1 success criteria require all 5 plugins to load correctly in Hermes, but the plan's test files only cover schema and share_knowledge tool unit tests. No tests verify that zeus, supervisor, revolt, or dashboard plugins actually load in Hermes.",
+      "impact": "Medium — plugin loading failures would be caught manually but not automatically."
+    },
+    {
+      "gap": "No cross-profile round-trip test in automated suite",
+      "description": "The plan describes a share_knowledge round-trip test (write from one profile, read from another) but the test files only test the tool in isolation with a single db_path. No test verifies actual cross-profile access via Hermes.",
+      "impact": "Medium — the critical integration path is untested."
+    },
+    {
+      "gap": "No Supervisor lifecycle tests",
+      "description": "The Supervisor plugin manages profile start/stop/idle TTL/crash recovery. No test plan exists for these scenarios: profile crash detection, idle timeout enforcement, concurrent start/stop, run_mode configuration changes.",
+      "impact": "High — Supervisor is the most complex new component and has the least test coverage."
+    },
+    {
+      "gap": "No FTS5 trigger integrity tests",
+      "description": "The schema tests verify tables exist and basic insert/query works, but don't test FTS trigger behavior after updates and deletes. If triggers are misconfigured, FTS index will silently diverge.",
+      "impact": "Medium — FTS divergence would cause search to return stale results, hard to debug."
+    },
+    {
+      "gap": "No dashboard auth tests",
+      "description": "The architecture requires session cookie auth. No tests verify authentication flow, cookie attributes, or that unauthenticated access is blocked.",
+      "impact": "Medium — security baseline could be violated without detection."
+    }
+  ]
+}

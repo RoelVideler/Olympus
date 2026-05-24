@@ -1,0 +1,354 @@
+{
+  "reviewer": "api-contract",
+  "findings": [
+    {
+      "title": "Inconsistent error response shapes across endpoints",
+      "severity": "P1",
+      "file": "plugins/dashboard/api.py",
+      "line": 84,
+      "confidence": 0.95,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "Clients must parse three different error shapes: (1) {\"status\": \"error\", \"database\": \"query_failed\", \"error\": \"...\"} from health (line 84), (2) {\"error\": \"...\"} from wiki/calendar/contacts/preferences (lines 121, 149, 173, 197), and (3) {\"error\": \"...\", \"message\": \"...\"} from deferred endpoints (line 205) and auth (lines 100, 125, 130, 138). A client written against one endpoint will fail to parse errors from another. This is a contract violation — error shape should be uniform across the entire API surface.",
+      "evidence": [
+        "api.py:84 — health error: {\"status\": \"error\", \"database\": \"query_failed\", \"error\": str(e)}",
+        "api.py:121 — wiki error: {\"error\": str(e)}",
+        "api.py:205 — deferred error: {\"error\": \"Not Implemented\", \"message\": \"...\"}",
+        "auth.py:100 — auth error: {\"error\": \"Unauthorized\", \"message\": \"...\"}",
+        "graphql.py:161 — graphql error: {\"errors\": [{\"message\": \"...\"}]}"
+      ],
+      "suggested_fix": "Standardize on a single error envelope, e.g. {\"error\": {\"code\": \"QUERY_FAILED\", \"message\": \"...\"}} or {\"errors\": [{\"code\": \"...\", \"message\": \"...\"}]}. Apply uniformly to all REST and GraphQL endpoints. Create a shared helper like `error_response(code, message, status)` in a common module."
+    },
+    {
+      "title": "GraphQL GET handler will crash on request.json()",
+      "severity": "P0",
+      "file": "plugins/dashboard/graphql.py",
+      "line": 158,
+      "confidence": 0.95,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "Line 182 registers GET /api/graphql alongside POST. But handle_graphql (line 158) unconditionally calls `await request.json()`, which will raise aiohttp.web.HTTPBadRequest for GET requests with no body. Any client or browser navigating to /api/graphql will get a 400 with no useful error. The comment on line 182 says 'Allow GET for simple queries' but the handler does not support this.",
+      "evidence": [
+        "graphql.py:182 — app.router.add_get(\"/api/graphql\", handle_graphql)",
+        "graphql.py:158 — body = await request.json() — will fail for GET with no body"
+      ],
+      "suggested_fix": "Either remove the GET registration (line 182), or branch on request.method: for GET, read query parameters (request.query.get('query')) instead of request.json(). Example: `if request.method == 'GET': query = request.query.get('query', ''); variables = json.loads(request.query.get('variables', '{}') or '{}')`."
+    },
+    {
+      "title": "Deferred endpoints only registered for GET — other methods return 404",
+      "severity": "P1",
+      "file": "plugins/dashboard/api.py",
+      "line": 224,
+      "confidence": 0.9,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "DEFERRED_ENDPOINTS (line 26) are only registered with `app.router.add_get()` (line 225). A client sending POST /api/tasks, PUT /api/notifications, or DELETE /api/search will get a 404 Not Found instead of the intended 501 Not Implemented. This misleads clients into thinking the endpoint doesn't exist rather than being planned for a future phase. When Phase 3 implements these endpoints, clients that tried POST will have been incorrectly routed.",
+      "evidence": [
+        "api.py:26-35 — DEFERRED_ENDPOINTS set with 8 paths",
+        "api.py:224-225 — only add_get() registered for each deferred path"
+      ],
+      "suggested_fix": "Register deferred endpoints for all common HTTP methods: `for path in DEFERRED_ENDPOINTS: for method in ('GET', 'POST', 'PUT', 'PATCH', 'DELETE'): app.router.add_route(method, path, handle_not_implemented)`. Or use a catch-all middleware that checks the path prefix."
+    },
+    {
+      "title": "Auth middleware does not exempt deferred endpoints — 401 before 501",
+      "severity": "P2",
+      "file": "plugins/dashboard/auth.py",
+      "line": 87,
+      "confidence": 0.85,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The auth middleware (auth.py:87) only exempts /api/login and HEAD /api/health. Deferred endpoints like /api/notifications are not exempted. An unauthenticated client GETting /api/notifications will receive 401 Unauthorized instead of 501 Not Implemented. This leaks information about authentication requirements for endpoints that don't exist yet, and creates a confusing developer experience — the client doesn't know if the endpoint is unimplemented or if they just need to authenticate.",
+      "evidence": [
+        "auth.py:90-95 — only /api/login and HEAD /api/health are exempted",
+        "api.py:26-35 — deferred endpoints like /api/notifications, /api/tasks, etc. are not exempted"
+      ],
+      "suggested_fix": "Add deferred endpoint paths to the auth middleware exemption list, or check if the path is in DEFERRED_ENDPOINTS before requiring auth. Better: import DEFERRED_ENDPOINTS from api.py and check `if request.path in DEFERRED_ENDPOINTS: return await handler(request)`."
+    },
+    {
+      "title": "Inconsistent success response shapes across REST endpoints",
+      "severity": "P1",
+      "file": "plugins/dashboard/api.py",
+      "line": 76,
+      "confidence": 0.9,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "Success responses use different top-level keys: /api/health returns {\"status\", \"database\", \"profiles\", \"knowledge_stats\"}, /api/wiki returns {\"wiki_entries\": [...]}, /api/calendar returns {\"events\": [...]}, /api/contacts returns {\"contacts\": [...]}, /api/preferences returns {\"preferences\": {...}}. There is no consistent envelope (e.g., {\"data\": {...}}) or naming convention. A generic dashboard client cannot iterate over responses uniformly. Additionally, /api/login returns {\"ok\": true, \"message\": \"...\"} which uses a completely different convention.",
+      "evidence": [
+        "api.py:76 — health: {\"status\", \"database\", \"profiles\", \"knowledge_stats\"}",
+        "api.py:97 — wiki: {\"wiki_entries\": [...]}",
+        "api.py:131 — calendar: {\"events\": [...]}",
+        "api.py:158 — contacts: {\"contacts\": [...]}",
+        "api.py:182 — preferences: {\"preferences\": {...}}",
+        "auth.py:147 — login: {\"ok\": true, \"message\": \"...\"}"
+      ],
+      "suggested_fix": "Adopt a consistent response envelope. Option A: wrap all data in {\"data\": {...}} with optional {\"meta\": {...}} for pagination/info. Option B: use resource-keyed responses consistently (e.g., always {\"health\": {...}}, {\"wiki\": {...}}). Ensure login also follows the same pattern."
+    },
+    {
+      "title": "GraphQL error responses use different shape than REST error responses",
+      "severity": "P1",
+      "file": "plugins/dashboard/graphql.py",
+      "line": 150,
+      "confidence": 0.9,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "GraphQL returns errors as {\"errors\": [{\"message\": \"...\"}]} (line 150, 161, 170), which follows the GraphQL spec. But REST endpoints use {\"error\": \"...\"} or {\"error\": \"...\", \"message\": \"...\"}. A client consuming both APIs needs two different error parsers. While GraphQL's {\"errors\": [...]} is spec-compliant, the REST side should at least be internally consistent, and the GraphQL success path returns {\"data\": result} while REST has no data wrapper — creating a third response shape.",
+      "evidence": [
+        "graphql.py:150 — {\"data\": result, \"errors\": [{\"message\": str(e)}]}",
+        "graphql.py:161 — {\"errors\": [{\"message\": \"Invalid JSON body\"}]}",
+        "api.py:121 — {\"error\": str(e)}"
+      ],
+      "suggested_fix": "Keep GraphQL's {\"errors\": [{\"message\"}]} for GraphQL-specific errors (per spec), but align REST endpoints to a single shape. Consider whether the GraphQL endpoint should also include a top-level \"error\" key for non-GraphQL-parseable errors (like invalid JSON) to match REST."
+    },
+    {
+      "title": "Preferences values stored and returned as raw strings — no type coercion",
+      "severity": "P2",
+      "file": "plugins/dashboard/api.py",
+      "line": 192,
+      "confidence": 0.8,
+      "autofix_class": "manual",
+      "owner": "human",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "Line 192 reads preferences as `row[\"value\"]` directly from SQLite, which stores everything as TEXT. A client expecting boolean, number, or JSON values will receive strings. For example, a preference like {\"dark_mode\": \"true\"} (string) vs {\"dark_mode\": true} (boolean) will cause type errors in typed clients. The GraphQL PreferencesType (graphql.py:108) has the same issue.",
+      "evidence": [
+        "api.py:192 — prefs = {row[\"key\"]: row[\"value\"] for row in cursor.fetchall()} — no type coercion",
+        "graphql.py:108 — same pattern in PreferencesType.resolve()"
+      ],
+      "suggested_fix": "Either (a) store a type column alongside value and coerce on read, (b) store JSON-encoded values and json.loads() on read, or (c) document that all preference values are strings and clients must coerce. Option (b) is most flexible."
+    },
+    {
+      "title": "Tool schemas use inconsistent format across plugins",
+      "severity": "P1",
+      "file": "plugins/zeus/skills/routing.py",
+      "line": 14,
+      "confidence": 0.9,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "Three different tool schema formats are used: (1) zeus/routing.py and zeus/chip_in.py use {\"name\": \"...\", \"description\": \"...\", \"parameters\": {...}} — the OpenAI function calling format without the outer wrapper. (2) share_knowledge/tools.py uses {\"type\": \"function\", \"function\": {\"name\": \"...\", ...}} — the full OpenAI tool format. (3) supervisor/__init__.py uses the same bare format as zeus ({\"name\": \"...\", \"parameters\": {...}}). If Hermes expects one format, tools using the other format will fail to register or be called incorrectly.",
+      "evidence": [
+        "routing.py:14-31 — bare format: {\"name\", \"description\", \"parameters\"}",
+        "chip_in.py:15-38 — bare format: {\"name\", \"description\", \"parameters\"}",
+        "tools.py:77-126 — wrapped format: {\"type\": \"function\", \"function\": {...}}",
+        "supervisor/__init__.py:31-43 — bare format: {\"name\", \"description\", \"parameters\"}"
+      ],
+      "suggested_fix": "Determine which format Hermes ctx.register_tool() expects and normalize all schemas to that format. If register_tool expects the bare format, remove the outer {\"type\": \"function\", \"function\": ...} wrapper from share_knowledge. If it expects the wrapped format, wrap all zeus and supervisor schemas."
+    },
+    {
+      "title": "No pagination on list endpoints — unbounded result sets",
+      "severity": "P2",
+      "file": "plugins/dashboard/api.py",
+      "line": 116,
+      "confidence": 0.85,
+      "autofix_class": "advisory",
+      "owner": "human",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "GET /api/wiki (line 116), /api/calendar (line 144), and /api/contacts (line 168) return all rows with no LIMIT clause. As the database grows, these endpoints will return increasingly large payloads, causing slow responses and potential memory issues. The share_knowledge tool has a `limit` parameter (default 10, max 100) but the REST endpoints have no equivalent. Clients have no way to request a specific page or batch size.",
+      "evidence": [
+        "api.py:113 — wiki: ORDER BY updated_at DESC with no LIMIT",
+        "api.py:142 — calendar: ORDER BY start_time ASC with no LIMIT",
+        "api.py:167 — contacts: ORDER BY name ASC with no LIMIT",
+        "tools.py:115-120 — share_knowledge has limit param (min 1, max 100, default 10)"
+      ],
+      "suggested_fix": "Add optional `limit` and `offset` (or `page`/`page_size`) query parameters to list endpoints. Default to a reasonable limit (e.g., 50). Return pagination metadata in the response: {\"data\": [...], \"meta\": {\"total\": N, \"limit\": 50, \"offset\": 0}}."
+    },
+    {
+      "title": "GraphQL field detection uses substring matching — false positives",
+      "severity": "P2",
+      "file": "plugins/dashboard/graphql.py",
+      "line": 127,
+      "confidence": 0.85,
+      "autofix_class": "manual",
+      "owner": "human",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "Line 127 checks `if field in query_str` using simple substring matching. A query containing the word 'health' in a variable value or comment would trigger the health resolver. For example, a wiki query like `{ wiki(domain: \"health\") { ... } }` would also trigger the health resolver because 'health' appears in the query string. This causes unnecessary database queries and potentially incorrect response shapes.",
+      "evidence": [
+        "graphql.py:126-128 — `for field in [\"health\", \"wiki\", ...]: if field in query_str: requested_fields.append(field)`",
+        "A query like `{ wiki(domain: \"health\") }` would match both 'wiki' and 'health'"
+      ],
+      "suggested_fix": "Use a proper query parser or at minimum regex with word boundaries: `re.search(r'\\b' + field + r'\\s*\\{', query_str)`. For a lightweight approach, look for the field name followed by optional whitespace and an opening brace."
+    },
+    {
+      "title": "Wiki and Calendar endpoints leak internal database state in responses",
+      "severity": "P2",
+      "file": "plugins/dashboard/api.py",
+      "line": 139,
+      "confidence": 0.8,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "Calendar (line 139) and contacts (line 165) and preferences (line 189) return a \"note\" field when the table doesn't exist: {\"events\": [], \"note\": \"calendar table not yet created\"}. This leaks internal implementation details (table existence) to API consumers. The /api/wiki endpoint does not check for table existence at all — it will throw a 500 if olympus_knowledge doesn't exist. The inconsistency between endpoints that check table existence and those that don't is also a contract issue.",
+      "evidence": [
+        "api.py:139 — calendar: {\"events\": [], \"note\": \"calendar table not yet created\"}",
+        "api.py:165 — contacts: {\"contacts\": [], \"note\": \"contacts table not yet created\"}",
+        "api.py:189 — preferences: {\"preferences\": {}, \"note\": \"preferences table not yet created\"}",
+        "api.py:99-118 — wiki: no table existence check, will 500 if table missing"
+      ],
+      "suggested_fix": "Remove the \"note\" field from responses. Return the empty result consistently. Add table existence checks to the wiki endpoint to match the pattern used by calendar/contacts/preferences. If table existence is a meaningful state, expose it through a separate metadata field or the /api/health endpoint."
+    },
+    {
+      "title": "No API versioning strategy — breaking changes will silently break clients",
+      "severity": "P2",
+      "file": "plugins/dashboard/api.py",
+      "line": 1,
+      "confidence": 0.75,
+      "autofix_class": "advisory",
+      "owner": "human",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "There is no API version prefix (e.g., /api/v1/health) or version header strategy. The docstring mentions 'Phase 2' and 'Phase 3+' but these are internal development phases, not API versions. When Phase 3 changes the response shape of an endpoint (e.g., adding required fields, changing field types, or restructuring the response), existing clients will break silently. The deferred endpoints returning 501 with 'planned for Phase 3+' (line 205) explicitly signals that the contract will change.",
+      "evidence": [
+        "api.py:1-9 — docstring references 'Phase 2' and 'Phase 3+'",
+        "api.py:205 — error message: 'is planned for Phase 3+'",
+        "No /api/v1/ prefix on any endpoint"
+      ],
+      "suggested_fix": "Add a version prefix to all routes (e.g., /api/v1/health) or implement Accept header versioning (Accept: application/vnd.hermus.v1+json). Even for a local-first tool, versioning prevents breaking changes when the dashboard is updated independently of clients."
+    },
+    {
+      "title": "Login endpoint returns different success shape than other endpoints",
+      "severity": "P2",
+      "file": "plugins/dashboard/auth.py",
+      "line": 147,
+      "confidence": 0.85,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "POST /api/login returns {\"ok\": true, \"message\": \"Logged in\"} (auth.py:147), while all other endpoints use resource-keyed responses or {\"status\": \"ok\"}. A client checking for \"status\" or \"ok\" fields will need per-endpoint logic. Additionally, the login response does not include any user information (user_id, session expiry) that a client might need to manage the session.",
+      "evidence": [
+        "auth.py:147 — {\"ok\": true, \"message\": \"Logged in\"}",
+        "api.py:76 — {\"status\": \"ok\", ...}",
+        "No user_id or session metadata in login response"
+      ],
+      "suggested_fix": "Align login response to match the API's convention: {\"status\": \"ok\", \"message\": \"Logged in\"} or {\"data\": {\"user\": \"admin\", \"session_expires_at\": \"...\"}}. Include session metadata (expiry time) so clients can proactively refresh."
+    },
+    {
+      "title": "WebSocket message format not documented or versioned",
+      "severity": "P3",
+      "file": "plugins/dashboard/websocket.py",
+      "line": 84,
+      "confidence": 0.7,
+      "autofix_class": "advisory",
+      "owner": "human",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "WebSocket messages use a {\"type\": \"...\"} convention (connected, subscribed, pong, error, zeus_chunk, system_event) but there is no schema documentation or versioning. The stream_zeus_response (line 117) and stream_system_event (line 128) functions define message shapes that clients depend on, but changes to these shapes will silently break WebSocket consumers. The 'timestamp' field uses time.time() (float seconds since epoch) — clients may expect ISO 8601 strings.",
+      "evidence": [
+        "websocket.py:84-88 — connected: {\"type\", \"timestamp\", \"message\"}",
+        "websocket.py:97-100 — subscribed: {\"type\", \"channels\"}",
+        "websocket.py:102 — pong: {\"type\", \"timestamp\"}",
+        "websocket.py:120-125 — zeus_chunk: {\"type\", \"session_id\", \"chunk\", \"timestamp\"}",
+        "websocket.py:134-139 — system_event: {\"type\", \"event_type\", \"data\", \"timestamp\"}"
+      ],
+      "suggested_fix": "Document the WebSocket message schema in a shared types module or docstring. Consider adding a \"version\" field to messages. Standardize timestamp format (ISO 8601 string vs float epoch)."
+    },
+    {
+      "title": "share_knowledge tool returns JSON strings while other tools return dicts",
+      "severity": "P1",
+      "file": "plugins/share_knowledge/tools.py",
+      "line": 24,
+      "confidence": 0.9,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "The share_knowledge tool handlers return JSON-encoded strings via tool_result() and tool_error() (lines 20-30), while zeus routing (routing.py:139), zeus chip_in (chip_in.py:128), and supervisor tools (__init__.py:95-109) return Python dicts. If Hermes expects a consistent return type from all tool handlers, this inconsistency will cause double-encoding (if Hermes json.dumps the result) or parsing errors (if Hermes expects a dict). The tool_result function returns str, but the handler signature implies dict return.",
+      "evidence": [
+        "tools.py:20-24 — tool_error returns json.dumps(str)",
+        "tools.py:27-30 — tool_result returns json.dumps(str)",
+        "tools.py:173 — _handle_share_knowledge returns str",
+        "routing.py:124 — handle_routing returns dict[str, Any]",
+        "chip_in.py:96 — handle_chip_in returns dict[str, Any]",
+        "supervisor/__init__.py:94 — _handle_start_profile returns Dict[str, Any]"
+      ],
+      "suggested_fix": "Determine what Hermes ctx.register_tool() expects as a handler return type. If it expects dicts, change share_knowledge to return dicts and let Hermes handle serialization. If it expects strings, change zeus and supervisor tools to return JSON strings. Consistency is critical."
+    },
+    {
+      "title": "GraphQL always returns HTTP 200 even on errors",
+      "severity": "P3",
+      "file": "plugins/dashboard/graphql.py",
+      "line": 175,
+      "confidence": 0.8,
+      "autofix_class": "advisory",
+      "owner": "human",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "Line 175 explicitly sets status=200 even when errors are present: `status_code = 200 if 'errors' not in result else 200`. While this follows the GraphQL spec (errors are part of the response body, not HTTP status), it means monitoring tools and load balancers cannot distinguish successful from failed GraphQL queries based on HTTP status. The comment on line 175 acknowledges this but the dead code (`if 'errors' not in result else 200`) suggests the author considered varying the status.",
+      "evidence": [
+        "graphql.py:175 — `status_code = 200 if \"errors\" not in result else 200` — both branches are 200",
+        "graphql.py:160-163 — Invalid JSON returns 400 (correct, this is a transport error, not a GraphQL error)"
+      ],
+      "suggested_fix": "Keep 200 for GraphQL execution errors (per spec), but consider returning 400 for transport-level errors (invalid JSON, missing query). The current code already does this correctly for transport errors. Remove the dead conditional on line 175: just use `status=200`."
+    },
+    {
+      "title": "Health endpoint response shape changes based on database availability",
+      "severity": "P2",
+      "file": "plugins/dashboard/api.py",
+      "line": 57,
+      "confidence": 0.85,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "When the database is missing (line 57-61), health returns {\"status\": \"ok\", \"database\": \"not_found\", \"profiles\": []}. When connected (line 76-81), it returns {\"status\": \"ok\", \"database\": \"connected\", \"profiles\": [...], \"knowledge_stats\": [...]}. The \"knowledge_stats\" field is absent in the no-db case. A client that always reads response[\"knowledge_stats\"] will crash when the database is missing. The \"database\" field acts as a discriminator but is not documented as such.",
+      "evidence": [
+        "api.py:57-61 — no-db response: {\"status\", \"database\", \"profiles\"} — missing knowledge_stats",
+        "api.py:76-81 — connected response: {\"status\", \"database\", \"profiles\", \"knowledge_stats\"}"
+      ],
+      "suggested_fix": "Always include all fields in the response, with empty defaults: {\"status\": \"ok\", \"database\": \"not_found\", \"profiles\": [], \"knowledge_stats\": []}. This ensures the response shape is stable regardless of database state."
+    },
+    {
+      "title": "No idempotency support on POST endpoints",
+      "severity": "P3",
+      "file": "plugins/dashboard/auth.py",
+      "line": 120,
+      "confidence": 0.65,
+      "autofix_class": "advisory",
+      "owner": "human",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "POST /api/login has no idempotency key support. If a client retries a login request (due to network timeout), it will create a new session cookie each time. For a local single-user tool this is low risk, but the pattern should be established early. More importantly, the share_knowledge write action (tools.py:238) creates a new UUID for each write — duplicate writes from retries will create duplicate facts.",
+      "evidence": [
+        "auth.py:120-149 — login creates new session on each POST",
+        "tools.py:236 — fact_id = str(uuid.uuid4()) — each write gets a new ID"
+      ],
+      "suggested_fix": "For login: session cookies are naturally idempotent (new cookie overwrites old in browser). For share_knowledge write: consider accepting an optional client-supplied idempotency key or fact_id to prevent duplicate writes on retry."
+    }
+  ],
+  "residual_risks": [
+    "The GraphQL lightweight parser (graphql.py:112-152) is not a real GraphQL implementation — it uses substring matching to detect requested fields. Complex queries with nested selections, aliases, or fragments will not work correctly. Clients expecting standard GraphQL behavior will be surprised.",
+    "The auth middleware uses a locally-generated secret (_generate_secret, auth.py:27) that persists across restarts but is not rotated. If the secret file is compromised, all existing sessions are valid until TTL expires. No session revocation mechanism exists.",
+    "The share_knowledge tool uses subprocess to call 'hermes' CLI (routing.py:111, chip_in.py:71) — this is an internal implementation detail, not an API contract issue, but if the CLI interface changes, these tools will break without the API surface changing.",
+    "The WebSocket hub uses a global singleton (_hub, websocket.py:61) — if multiple aiohttp applications are created (e.g., in tests), they will share the same hub, causing cross-test pollution.",
+    "No rate limiting is implemented on any endpoint. The login endpoint (auth.py:120) is particularly vulnerable to brute-force attacks, though this is mitigated by local-only deployment.",
+    "The deferred endpoints pattern (501 with 'planned for Phase 3+') creates a contract promise — clients may build against the expectation that these endpoints will exist with specific shapes. When implemented, the response shape must be documented in advance."
+  ],
+  "testing_gaps": [
+    "No contract tests verifying that all error responses share a consistent shape across endpoints.",
+    "No test that GET /api/graphql returns a useful error (currently crashes with 400).",
+    "No test that deferred endpoints return 501 for POST/PUT/DELETE (currently return 404).",
+    "No test that auth middleware correctly exempts deferred endpoints (currently does not).",
+    "No test verifying response shape stability when database is missing vs connected (health endpoint).",
+    "No test that tool handler return types are consistent (dict vs JSON string) across all plugins.",
+    "No test for GraphQL substring-matching false positives (e.g., wiki query with 'health' in domain).",
+    "No integration test verifying that the auth middleware, REST endpoints, and WebSocket endpoint work together with a valid session cookie.",
+    "No test for the share_knowledge scope enforcement logic with various profile/scope/action combinations.",
+    "No test verifying that preferences values are returned in the expected type (currently always strings)."
+  ]
+}

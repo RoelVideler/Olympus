@@ -1,0 +1,226 @@
+{
+  "reviewer": "correctness",
+  "findings": [
+    {
+      "title": "RevoltClient.authenticate() closes the aiohttp session before returning, breaking all subsequent API calls",
+      "severity": "P0",
+      "file": "plugins/revolt/client.py",
+      "line": 55,
+      "confidence": 0.95,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "The `async with aiohttp.ClientSession() as session:` context manager calls `session.close()` when the block exits. Since `self._session = session` is assigned inside the block, `self._session` points to a closed session after `authenticate()` returns. Every subsequent call to `send_message()`, `send_typing()`, `get_channel()`, etc. will fail because the session is closed. The Revolt adapter will authenticate successfully but be completely non-functional for all messaging.",
+      "evidence": [
+        "client.py lines 55-56: `async with aiohttp.ClientSession() as session:` then `self._session = session` inside the block",
+        "When the `async with` block exits (line 79), `session.close()` is called automatically",
+        "adapter.py line 147 calls `await self._client.authenticate()`, then line 162 starts the WebSocket listener which uses `self._client.handle_events()` — but `handle_events()` at line 216 uses `self._session.ws_connect()` which will fail on a closed session",
+        "Similarly, `send_message()` at line 91 checks `if not self._session` — the session is not None but is closed, so the check passes and the POST request fails"
+      ],
+      "suggested_fix": "Create the ClientSession outside the context manager and store it. Only use `async with` for the individual request blocks, or remove the `async with` around ClientSession entirely and manage lifecycle via `self._client.close()`. Example:\n\n```python\nasync def authenticate(self) -> bool:\n    self._session = aiohttp.ClientSession()\n    self._headers = {...}\n    try:\n        async with self._session.get(...) as resp:\n            ...\n    except aiohttp.ClientError as e:\n        await self._session.close()\n        self._session = None\n        return False\n    return True\n```"
+    },
+    {
+      "title": "share_knowledge __init__.py imports non-existent name SPEC, crashing the plugin at load time",
+      "severity": "P0",
+      "file": "plugins/share_knowledge/__init__.py",
+      "line": 1,
+      "confidence": 0.99,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The `__init__.py` does `from .tools import _handle_share_knowledge, SPEC` but `tools.py` defines `SHARE_KNOWLEDGE_SCHEMA`, not `SPEC`. This ImportError will crash the Hermes plugin loader when it tries to import the share_knowledge plugin, making the entire plugin non-functional.",
+      "evidence": [
+        "__init__.py line 1: `from .tools import _handle_share_knowledge, SPEC`",
+        "tools.py line 76: defines `SHARE_KNOWLEDGE_SCHEMA = {...}` — no `SPEC` variable exists anywhere in tools.py",
+        "grep confirms SPEC only appears in __init__.py, never in tools.py"
+      ],
+      "suggested_fix": "Change the import in __init__.py to match the actual name in tools.py:\n\n```python\nfrom .tools import _handle_share_knowledge, SHARE_KNOWLEDGE_SCHEMA as SPEC\n```\n\nOr rename the export in __init__.py to use the correct name."
+    },
+    {
+      "title": "chip_in.handle_chip_in() uses asyncio.run() which raises RuntimeError if called from an already-running event loop",
+      "severity": "P0",
+      "file": "plugins/zeus/skills/chip_in.py",
+      "line": 120,
+      "confidence": 0.90,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "The `handle_chip_in` function is a synchronous tool handler that calls `asyncio.run(_run())` at line 120. If Hermes invokes this tool handler from within an async context (which is the expected pattern for a gateway plugin — the routing and tool dispatch likely runs on the gateway's event loop), `asyncio.run()` will raise `RuntimeError: asyncio.run() cannot be called from a running event loop`. This makes the chip_in skill completely non-functional in production.",
+      "evidence": [
+        "chip_in.py line 120: `results = asyncio.run(_run())`",
+        "The function `handle_chip_in` is registered as a tool handler (zeus/__init__.py line 28), and tool handlers in Hermes gateway plugins are typically invoked from the async event loop",
+        "Python's asyncio.run() documentation explicitly states it cannot be called from a running event loop"
+      ],
+      "suggested_fix": "Check for a running event loop and use the appropriate execution path:\n\n```python\ntry:\n    loop = asyncio.get_running_loop()\n    # Already in async context — use run_until_complete via a thread or restructure\n    import concurrent.futures\n    with concurrent.futures.ThreadPoolExecutor() as executor:\n        results = executor.submit(asyncio.run, _run()).result()\nexcept RuntimeError:\n    # No running loop — safe to use asyncio.run()\n    results = asyncio.run(_run())\n```\n\nOr better: make `handle_chip_in` async and use `await asyncio.gather()` directly, if the Hermes tool system supports async handlers."
+    },
+    {
+      "title": "RevoltErrorHandler.get_backoff() returns -1 on max retries, passed directly to asyncio.sleep() causing a tight spin loop",
+      "severity": "P1",
+      "file": "plugins/revolt/adapter.py",
+      "line": 211,
+      "confidence": 0.95,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "After 5 consecutive WebSocket errors, `get_backoff()` returns -1 (error_handler.py line 37). The adapter passes this directly to `asyncio.sleep(delay)` at line 213. `asyncio.sleep(-1)` returns immediately (negative delays are treated as 0), causing the reconnect loop to spin infinitely with zero delay. This creates a tight CPU-burning loop that will hammer the Revolt server and consume 100% of a CPU core.",
+      "evidence": [
+        "error_handler.py line 32-37: `if self._retry_count >= MAX_RETRIES: return -1`",
+        "adapter.py line 211: `delay = self._error_handler.get_backoff()`",
+        "adapter.py line 213: `await asyncio.sleep(delay)` — no check for negative value",
+        "The `reset()` method exists (error_handler.py line 46) but is never called anywhere in the codebase, so retry count never resets even after successful reconnection"
+      ],
+      "suggested_fix": "Check for -1 return and stop reconnecting:\n\n```python\ndelay = self._error_handler.get_backoff()\nif delay < 0:\n    logger.error(\"[%s] Max retries exceeded — stopping reconnect\", self.name)\n    self._running = False\n    return\nawait asyncio.sleep(delay)\n```\n\nAlso call `self._error_handler.reset()` after a successful WebSocket connection in `_run_websocket()` (before the try block or after the `await self._client.handle_events()` returns normally)."
+    },
+    {
+      "title": "Dashboard GraphQL GET endpoint always returns 400 — query parameter support is not implemented",
+      "severity": "P1",
+      "file": "plugins/dashboard/graphql.py",
+      "line": 158,
+      "confidence": 0.90,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The GraphQL route is registered for both POST and GET (line 180-181), with the comment 'Allow GET for simple queries'. However, `handle_graphql` only reads from `await request.json()` (line 158), which fails for GET requests that have no body. The empty body causes `json.JSONDecodeError`, caught at line 159, returning a 400 error. GET requests to `/api/graphql` will always fail, making the registered GET route dead code that misleads users into thinking GET queries are supported.",
+      "evidence": [
+        "graphql.py line 181: `app.router.add_get(\"/api/graphql\", handle_graphql)` with comment 'Allow GET for simple queries'",
+        "graphql.py line 158: `body = await request.json()` — GET requests have no body",
+        "graphql.py line 159: `except json.JSONDecodeError` — catches the empty-body decode failure and returns 400",
+        "No code reads `request.query` for GET-based GraphQL queries"
+      ],
+      "suggested_fix": "Either remove the GET route registration, or implement GET support by reading query parameters:\n\n```python\nasync def handle_graphql(request: web.Request) -> web.Response:\n    if request.method == 'GET':\n        query = request.query.get('query', '')\n        variables_str = request.query.get('variables')\n        variables = json.loads(variables_str) if variables_str else None\n    else:\n        try:\n            body = await request.json()\n        except json.JSONDecodeError:\n            return web.json_response(..., status=400)\n        query = body.get('query', '')\n        variables = body.get('variables')\n    ...\n```"
+    },
+    {
+      "title": "Dashboard handle_login crashes with AttributeError when JSON body is not a dict (e.g., array or string)",
+      "severity": "P1",
+      "file": "plugins/dashboard/auth.py",
+      "line": 128,
+      "confidence": 0.90,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "After parsing JSON at line 123, the code assumes `body` is a dict and calls `body.get('password', '')` at line 128. If the client sends a JSON array `[1,2,3]` or string `\"hello\"`, `body.get()` raises `AttributeError` because lists and strings don't have a `.get()` method. This produces an unhandled 500 error instead of a proper 400 response.",
+      "evidence": [
+        "auth.py line 123: `body = await request.json()` — returns any valid JSON value",
+        "auth.py line 128: `password = body.get(\"password\", \"\")` — assumes body is a dict",
+        "Only `json.JSONDecodeError` is caught at line 124, not `AttributeError`"
+      ],
+      "suggested_fix": "Add a type check after JSON parsing:\n\n```python\nbody = await request.json()\nif not isinstance(body, dict):\n    return web.json_response({\"error\": \"Invalid JSON\"}, status=400)\n```"
+    },
+    {
+      "title": "WebSocketHub get_hub() has a TOCTOU race condition — concurrent calls can create duplicate hubs, losing connections",
+      "severity": "P1",
+      "file": "plugins/dashboard/websocket.py",
+      "line": 67,
+      "confidence": 0.80,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The `get_hub()` function checks `if _hub is None` and then creates a new `WebSocketHub()` without any synchronization. If two threads call `get_hub()` concurrently during initialization, both can see `_hub is None`, both create new instances, and the second overwrites the first. The first hub's connections are silently lost — clients connected to the orphaned hub will never receive broadcasts.",
+      "evidence": [
+        "websocket.py lines 64-69: classic check-then-act pattern without locking",
+        "The `WebSocketHub` class itself uses `asyncio.Lock` for its internal operations, but `get_hub()` has no synchronization",
+        "The dashboard `__init__.py` uses `threading.Lock` for app initialization but not for hub creation"
+      ],
+      "suggested_fix": "Use a lock or module-level initialization:\n\n```python\n_hub_lock = threading.Lock()\n\ndef get_hub() -> WebSocketHub:\n    global _hub\n    if _hub is None:\n        with _hub_lock:\n            if _hub is None:  # double-check\n                _hub = WebSocketHub()\n    return _hub\n```\n\nOr simply initialize at module level: `_hub = WebSocketHub()` since it has no expensive construction."
+    },
+    {
+      "title": "Revolt routing module is imported but never used — all messages are forwarded to Hermes regardless of routing rules",
+      "severity": "P2",
+      "file": "plugins/revolt/adapter.py",
+      "line": 58,
+      "confidence": 0.95,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The adapter imports `get_router` from routing.py (line 58) but never calls it. The `_on_message` method at line 226 always calls `await self.handle_message(message_event)` without checking `should_respond()` or `resolve_profile()`. This means: (1) group messages without bot mentions are still forwarded to Hermes, wasting resources and potentially causing unwanted responses, and (2) channel-specific routing rules defined via `add_rule()` have no effect. The routing module is dead code that creates a false sense of functionality.",
+      "evidence": [
+        "adapter.py line 58: `from .routing import get_router` — imported but never used",
+        "adapter.py line 285: `await self.handle_message(message_event)` — called unconditionally",
+        "routing.py defines `should_respond()` and `resolve_profile()` but neither is called from the adapter",
+        "The adapter's `_on_message` does filter out bot's own messages (line 234) and empty messages (line 238), but does not use the routing module's more sophisticated filtering"
+      ],
+      "suggested_fix": "Integrate the router into `_on_message`:\n\n```python\nasync def _on_message(self, payload: Dict[str, Any]) -> None:\n    ...\n    router = get_router()\n    if not router.should_respond(payload, self._client.bot_user_id):\n        return  # Ignore messages we shouldn't respond to\n    ...\n```"
+    },
+    {
+      "title": "share_knowledge _delete returns 'deleted' status with rows_affected=0 when the fact doesn't exist",
+      "severity": "P2",
+      "file": "plugins/share_knowledge/tools.py",
+      "line": 298,
+      "confidence": 0.85,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "When a delete is requested for a non-existent fact ID, the code returns `{\"status\": \"deleted\", \"rows_affected\": 0}`. This is semantically misleading — the caller receives a success status (\"deleted\") when nothing was actually deleted. A caller checking only `status == \"deleted\"` would incorrectly believe the deletion succeeded. This could mask bugs where a caller tries to delete the wrong ID or a fact was already deleted by another profile.",
+      "evidence": [
+        "tools.py lines 292-298: `row = conn.execute(...).fetchone()` then `if row is None: return tool_result({\"status\": \"deleted\", \"rows_affected\": 0})`",
+        "The status string \"deleted\" implies success, but `rows_affected: 0` contradicts this",
+        "A caller doing `if result[\"status\"] == \"deleted\"` would treat this as success"
+      ],
+      "suggested_fix": "Return a distinct status for not-found:\n\n```python\nif row is None:\n    return tool_result({\"status\": \"not_found\", \"id\": fact_id})\n```"
+    },
+    {
+      "title": "routing._detect_domain returns first keyword match, not the most specific or best match",
+      "severity": "P2",
+      "file": "plugins/zeus/skills/routing.py",
+      "line": 101,
+      "confidence": 0.75,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The `_detect_domain` function iterates over `DOMAIN_MAP.items()` and returns the domain for the first keyword found in the query. Since Python 3.7+ dicts preserve insertion order, the match depends on the order keywords were added to the dict, not on relevance. For example, a query like 'I need to plan my health schedule' contains both 'plan' (→ chronos) and 'health' (→ iaso). Whichever keyword appears first in DOMAIN_MAP wins, potentially routing to the wrong specialist. This is a correctness issue for ambiguous queries.",
+      "evidence": [
+        "routing.py lines 99-105: simple iteration with early return on first match",
+        "DOMAIN_MAP has overlapping semantic domains (e.g., 'planning' → chronos, 'health' → iaso)",
+        "No scoring or specificity logic — 'schedule' in 'health schedule' matches chronos if 'schedule' appears before 'health' in iteration order"
+      ],
+      "suggested_fix": "Use longest-match or score-based matching:\n\n```python\ndef _detect_domain(query: str) -> str:\n    query_lower = query.lower()\n    best_match = None\n    best_len = 0\n    for keyword, domain in DOMAIN_MAP.items():\n        if keyword in query_lower and len(keyword) > best_len:\n            best_match = domain\n            best_len = len(keyword)\n    return best_match if best_match else \"unknown\"\n```"
+    },
+    {
+      "title": "get_db() return type annotation claims sqlite3.Connection but actually returns None",
+      "severity": "P3",
+      "file": "plugins/dashboard/api.py",
+      "line": 38,
+      "confidence": 0.95,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The type annotation `def get_db() -> sqlite3.Connection:` is incorrect — the function returns `None` when the database file doesn't exist (line 42). While all callers correctly check `if conn is None`, the wrong type annotation misleads static analysis tools and developers reading the code. This is a minor correctness issue in the type contract.",
+      "evidence": [
+        "api.py line 38: `def get_db() -> sqlite3.Connection:`",
+        "api.py line 42: `return None`",
+        "All callers (handle_health, handle_wiki, etc.) check `if conn is None` before use, so runtime behavior is correct"
+      ],
+      "suggested_fix": "Fix the return type annotation:\n\n```python\ndef get_db() -> sqlite3.Connection | None:\n```"
+    }
+  ],
+  "residual_risks": [
+    "The Revolt adapter's `_run_websocket` loop has no mechanism to reset the error handler retry count after a successful reconnection. Even with the -1 fix, if the connection drops again after recovering, the retry count continues from where it left off rather than resetting.",
+    "The supervisor's `stop_profile` has a PID reuse race condition: between sending SIGTERM and checking `_pid_alive()`, the OS could reuse the PID for a different process. The 10-second total timeout window makes this unlikely but not impossible on busy systems.",
+    "The dashboard's `auth_middleware` allows HEAD requests to `/api/health` without authentication (line 94), but GET requests to `/api/health` require auth. This asymmetry could be exploited to probe health status without credentials, though the data returned by HEAD is minimal.",
+    "The `chip_in.py` `_call_profile_async` uses `asyncio.get_event_loop()` (line 66) which is deprecated in Python 3.10+ in favor of `asyncio.get_running_loop()`. This will produce deprecation warnings and may break in future Python versions.",
+    "The share_knowledge `_write` function uses `uuid.uuid4()` for fact IDs but doesn't handle the (extremely unlikely) case of a UUID collision with an existing row. The `INSERT` would fail with an IntegrityError, which propagates as a generic error to the caller.",
+    "The idle state file (`~/.hermes/supervisor/idle_state.json`) is written with a tmp+replace pattern (atomic on POSIX) but read without any locking beyond the threading lock. If the process crashes mid-write, the state file could be corrupted, causing all profiles to appear as never-active."
+  ],
+  "testing_gaps": [
+    "No test verifies that the RevoltClient session remains open after authenticate() — this P0 bug would be caught by a simple test that calls authenticate() then checks `client._session.closed`.",
+    "No test imports the share_knowledge plugin's __init__.py — the SPEC ImportError would be caught immediately by `import plugins.share_knowledge`.",
+    "No test calls chip_in.handle_chip_in() from within an async context — the asyncio.run() RuntimeError would be caught by wrapping the call in `asyncio.get_event_loop().run_in_executor()` or similar.",
+    "No test exercises the GraphQL GET endpoint — would reveal that it always returns 400.",
+    "No test sends a non-dict JSON body to the login endpoint — would reveal the AttributeError crash.",
+    "No test verifies that the Revolt routing module's should_respond() is actually called by the adapter — would reveal the dead-code routing issue.",
+    "No test covers the error handler's max-retries-exceeded path — would reveal the asyncio.sleep(-1) tight loop.",
+    "No test verifies WebSocketHub singleton behavior under concurrent access.",
+    "The test_schema.py tests have `db.commit()` inside `pytest.raises(sqlite3.IntegrityError)` blocks — the commit() is dead code since SQLite raises on execute(), not commit(). This doesn't affect production code but makes the tests misleading."
+  ]
+}

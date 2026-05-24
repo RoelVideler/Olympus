@@ -1,0 +1,430 @@
+{
+  "review_type": "agent-native-architecture",
+  "scope": "Olympus Phase 1 Hermes Plugins",
+  "timestamp": "2026-05-24T16:55:38Z",
+  "commit": "d5feaa5",
+  "summary": "Olympus Phase 1 implements a plugin-based architecture for Hermes Agent with 5 plugins (zeus, supervisor, revolt, dashboard, share_knowledge) and 10 agent profiles. The architecture is fundamentally agent-native: plugins register tools via ctx.register_tool(), profiles are configured as Hermes agent profiles with toolsets, and all data flows through a shared SQLite workspace. However, there are critical gaps: the share_knowledge plugin has a broken import (SPEC vs SHARE_KNOWLEDGE_SCHEMA) and lacks a register() function entirely, meaning the tool is never registered with Hermes. The routing and chip_in tools embed business logic (domain classification, relevance scoring) rather than being pure primitives. The Dashboard plugin is a human-facing web UI with no agent-accessible equivalent tools. Supervisor tools are registered but only accessible to Zeus, not to other agents or humans directly.",
+  "capability_map": [
+    {
+      "ui_action": "Route query to specialist profile",
+      "location": "plugins/zeus/skills/routing.py",
+      "agent_tool": "routing (zeus toolset)",
+      "in_prompt": true,
+      "priority": "must-have",
+      "status": "implemented-but-workflow-tool"
+    },
+    {
+      "ui_action": "Poll specialists for chip-in",
+      "location": "plugins/zeus/skills/chip_in.py",
+      "agent_tool": "chip_in (zeus toolset)",
+      "in_prompt": true,
+      "priority": "must-have",
+      "status": "implemented-but-workflow-tool"
+    },
+    {
+      "ui_action": "Write cross-agent knowledge fact",
+      "location": "plugins/share_knowledge/tools.py",
+      "agent_tool": "share_knowledge (NOT REGISTERED)",
+      "in_prompt": false,
+      "priority": "must-have",
+      "status": "broken-import-no-registration"
+    },
+    {
+      "ui_action": "Query cross-agent knowledge facts",
+      "location": "plugins/share_knowledge/tools.py",
+      "agent_tool": "share_knowledge (NOT REGISTERED)",
+      "in_prompt": false,
+      "priority": "must-have",
+      "status": "broken-import-no-registration"
+    },
+    {
+      "ui_action": "Delete cross-agent knowledge fact",
+      "location": "plugins/share_knowledge/tools.py",
+      "agent_tool": "share_knowledge (NOT REGISTERED)",
+      "in_prompt": false,
+      "priority": "must-have",
+      "status": "broken-import-no-registration"
+    },
+    {
+      "ui_action": "Start profile process",
+      "location": "plugins/supervisor/__init__.py",
+      "agent_tool": "start_profile (supervisor toolset)",
+      "in_prompt": false,
+      "priority": "must-have",
+      "status": "implemented"
+    },
+    {
+      "ui_action": "Stop profile process",
+      "location": "plugins/supervisor/__init__.py",
+      "agent_tool": "stop_profile (supervisor toolset)",
+      "in_prompt": false,
+      "priority": "must-have",
+      "status": "implemented"
+    },
+    {
+      "ui_action": "Check profile health",
+      "location": "plugins/supervisor/__init__.py",
+      "agent_tool": "health_check (supervisor toolset)",
+      "in_prompt": false,
+      "priority": "must-have",
+      "status": "implemented"
+    },
+    {
+      "ui_action": "Check profile idle time",
+      "location": "plugins/supervisor/__init__.py",
+      "agent_tool": "idle_status (supervisor toolset)",
+      "in_prompt": false,
+      "priority": "should-have",
+      "status": "implemented"
+    },
+    {
+      "ui_action": "View health data (web)",
+      "location": "plugins/dashboard/api.py GET /api/health",
+      "agent_tool": "none",
+      "in_prompt": false,
+      "priority": "should-have",
+      "status": "human-only-web-endpoint"
+    },
+    {
+      "ui_action": "View wiki data (web)",
+      "location": "plugins/dashboard/api.py GET /api/wiki",
+      "agent_tool": "none",
+      "in_prompt": false,
+      "priority": "should-have",
+      "status": "human-only-web-endpoint"
+    },
+    {
+      "ui_action": "View calendar (web)",
+      "location": "plugins/dashboard/api.py GET /api/calendar",
+      "agent_tool": "none",
+      "in_prompt": false,
+      "priority": "should-have",
+      "status": "human-only-web-endpoint"
+    },
+    {
+      "ui_action": "View contacts (web)",
+      "location": "plugins/dashboard/api.py GET /api/contacts",
+      "agent_tool": "none",
+      "in_prompt": false,
+      "priority": "should-have",
+      "status": "human-only-web-endpoint"
+    },
+    {
+      "ui_action": "View preferences (web)",
+      "location": "plugins/dashboard/api.py GET /api/preferences",
+      "agent_tool": "none",
+      "in_prompt": false,
+      "priority": "low",
+      "status": "human-only-web-endpoint"
+    },
+    {
+      "ui_action": "Query complex data (GraphQL)",
+      "location": "plugins/dashboard/graphql.py POST /api/graphql",
+      "agent_tool": "none",
+      "in_prompt": false,
+      "priority": "should-have",
+      "status": "human-only-web-endpoint"
+    },
+    {
+      "ui_action": "Receive real-time streaming (WebSocket)",
+      "location": "plugins/dashboard/websocket.py GET /ws",
+      "agent_tool": "none",
+      "in_prompt": false,
+      "priority": "should-have",
+      "status": "human-only-web-endpoint"
+    },
+    {
+      "ui_action": "Receive messages via Revolt",
+      "location": "plugins/revolt/adapter.py",
+      "agent_tool": "platform adapter (not a tool)",
+      "in_prompt": true,
+      "priority": "must-have",
+      "status": "implemented-as-platform"
+    },
+    {
+      "ui_action": "Send messages via Revolt",
+      "location": "plugins/revolt/adapter.py",
+      "agent_tool": "platform adapter (not a tool)",
+      "in_prompt": true,
+      "priority": "must-have",
+      "status": "implemented-as-platform"
+    }
+  ],
+  "findings": [
+    {
+      "severity": "critical",
+      "id": "ANR-001",
+      "title": "share_knowledge plugin has broken import — crashes at load time",
+      "location": "plugins/share_knowledge/__init__.py:1",
+      "description": "__init__.py imports SPEC from tools.py, but tools.py defines SHARE_KNOWLEDGE_SCHEMA, not SPEC. This ImportError will crash the Hermes plugin loader when it tries to import the share_knowledge plugin, making the entire plugin non-functional. All 10 profiles that list share_knowledge in their toolsets will fail to load this tool.",
+      "fix": "Change the import to: `from .tools import _handle_share_knowledge, SHARE_KNOWLEDGE_SCHEMA as SPEC` or rename the export to match the actual variable name.",
+      "confidence": 0.95
+    },
+    {
+      "severity": "critical",
+      "id": "ANR-002",
+      "title": "share_knowledge plugin has no register() function — tool is never registered with Hermes",
+      "location": "plugins/share_knowledge/__init__.py",
+      "description": "The share_knowledge plugin __init__.py only exports _handle_share_knowledge and SPEC. It has no register(ctx) function and never calls ctx.register_tool(). Even if the import bug is fixed, the tool will never be available to any agent profile. All 10 profiles list share_knowledge in their toolsets, but the tool is never actually registered.",
+      "fix": "Add a register(ctx) function to plugins/share_knowledge/__init__.py that calls ctx.register_tool() with the SHARE_KNOWLEDGE_SCHEMA and _handle_share_knowledge handler, following the pattern used by zeus/__init__.py and supervisor/__init__.py.",
+      "confidence": 0.95
+    },
+    {
+      "severity": "critical",
+      "id": "ANR-003",
+      "title": "routing tool embeds business logic — workflow tool anti-pattern",
+      "location": "plugins/zeus/skills/routing.py:33-96",
+      "description": "The routing tool contains a hardcoded DOMAIN_MAP (33 keyword-to-profile mappings), a hardcoded SPECIALIST_PROFILES list, and embedded prompts (ROUTING_PROMPT, SPECIALIST_PROMPT) that encode business logic for domain classification. The tool makes decisions about which profile to call and what prompt to send. This is a workflow tool, not a primitive. If a new specialist profile is added, the DOMAIN_MAP must be updated in code. The agent cannot reason about routing independently.",
+      "fix": "Extract the DOMAIN_MAP and SPECIALIST_PROFILES into a shared configuration file (YAML or JSON) that can be read at runtime. Make the routing tool a primitive that accepts a list of profiles to poll and returns raw results, letting the agent (Zeus) decide which profiles to query based on its system prompt knowledge of specialist domains.",
+      "confidence": 0.85
+    },
+    {
+      "severity": "critical",
+      "id": "ANR-004",
+      "title": "chip_in tool embeds business logic — workflow tool anti-pattern",
+      "location": "plugins/zeus/skills/chip_in.py:51-61",
+      "description": "The chip_in tool contains a hardcoded CHIP_IN_PROMPT that encodes the JSON response format expected from specialist profiles, a hardcoded SPECIALIST_PROFILES list, and built-in threshold filtering. The tool decides which profiles to poll, what prompt to send, and which results to include based on the threshold. This is a workflow tool, not a primitive.",
+      "fix": "Make chip_in a primitive that accepts a list of profiles, a prompt template, and returns raw results. Let Zeus's system prompt define the specialist profiles and the chip-in evaluation criteria. Move the threshold filtering to the agent level.",
+      "confidence": 0.85
+    },
+    {
+      "severity": "warning",
+      "id": "ANR-005",
+      "title": "Dashboard endpoints are human-only — no agent-accessible equivalent",
+      "location": "plugins/dashboard/api.py, plugins/dashboard/graphql.py",
+      "description": "The Dashboard plugin serves REST and GraphQL endpoints for viewing agent data (health, wiki, calendar, contacts, preferences). These are human-facing web UI endpoints with no corresponding agent tools. An agent cannot query the same data that a human sees in the dashboard. This violates context parity — the human sees data the agent cannot access through tools.",
+      "recommendation": "Add agent-accessible tools for reading dashboard data (e.g., read_health, read_wiki, read_calendar, read_contacts, read_preferences) that query the same SQLite database. Alternatively, document that agents should query the shared SQLite database directly via the file tool, but this bypasses the structured API.",
+      "confidence": 0.80
+    },
+    {
+      "severity": "warning",
+      "id": "ANR-006",
+      "title": "Supervisor tools not in any profile's toolset — only Zeus can call them indirectly",
+      "location": "plugins/supervisor/__init__.py, profiles/*/config.yaml",
+      "description": "The Supervisor plugin registers 4 tools (start_profile, stop_profile, health_check, idle_status) in the 'supervisor' toolset. However, no profile config.yaml lists 'supervisor' in its toolsets. Zeus lists toolsets: [web, memory, session_search, clarify, delegation, share_knowledge, zeus] — no supervisor. This means the Supervisor tools are registered but not enabled for any profile. The Supervisor's background threads (health monitor, idle enforcer) run automatically, but no agent can explicitly call start_profile, stop_profile, health_check, or idle_status.",
+      "recommendation": "Add 'supervisor' to Zeus's toolsets in profiles/zeus/config.yaml so Zeus can explicitly manage profile lifecycle. Or document that Supervisor tools are for internal use only and agents should rely on the background threads.",
+      "confidence": 0.90
+    },
+    {
+      "severity": "warning",
+      "id": "ANR-007",
+      "title": "System prompts are static — no dynamic context injection",
+      "location": "profiles/zeus/config.yaml:32-52",
+      "description": "Zeus's system_prompt is a static string in config.yaml. It lists specialist profiles and their domains, but this information is duplicated in routing.py's DOMAIN_MAP. If a profile is added or removed, both the system prompt and the DOMAIN_MAP must be updated. There is no dynamic context injection of available profiles, their health status, or recent activity into the system prompt at runtime.",
+      "recommendation": "Inject runtime context into the system prompt: available profiles, their current status (running/stopped), and recent chip-in activity. This could be done via a system prompt template that Hermes fills at profile startup, or via a tool that returns current profile status that Zeus calls at the start of each conversation.",
+      "confidence": 0.75
+    },
+    {
+      "severity": "warning",
+      "id": "ANR-008",
+      "title": "SPECIALIST_PROFILES duplicated across routing.py and chip_in.py",
+      "location": "plugins/zeus/skills/routing.py:74-83, plugins/zeus/skills/chip_in.py:40-49",
+      "description": "The list of 8 specialist profiles is hardcoded in two separate files. Adding a new profile requires updating both files plus the system prompt in config.yaml plus the DOMAIN_MAP. This is a maintenance risk and a source of inconsistency.",
+      "recommendation": "Move SPECIALIST_PROFILES and DOMAIN_MAP to a shared constants file (e.g., plugins/zeus/constants.py) and import in both modules and reference in the system prompt.",
+      "confidence": 0.95
+    },
+    {
+      "severity": "warning",
+      "id": "ANR-009",
+      "title": "share_knowledge tool schema format inconsistent with other plugins",
+      "location": "plugins/share_knowledge/tools.py:76-126",
+      "description": "The SHARE_KNOWLEDGE_SCHEMA uses the full OpenAI tool format with outer wrapper: {\"type\": \"function\", \"function\": {...}}. The zeus and supervisor plugins use the bare format: {\"name\": \"...\", \"description\": \"...\", \"parameters\": {...}}. If Hermes ctx.register_tool() expects one format, tools using the other format will fail to register or be called incorrectly.",
+      "recommendation": "Normalize all tool schemas to the same format. Determine what Hermes ctx.register_tool() expects and apply consistently across all 5 plugins.",
+      "confidence": 0.70
+    },
+    {
+      "severity": "warning",
+      "id": "ANR-010",
+      "title": "share_knowledge tool returns JSON strings, other tools return dicts",
+      "location": "plugins/share_knowledge/tools.py:27-30 vs plugins/zeus/skills/routing.py:139-154",
+      "description": "The share_knowledge tool returns JSON-encoded strings via tool_result() and tool_error(). The zeus routing and chip_in tools return Python dicts. The supervisor tools return Python dicts. If Hermes expects a consistent return type, this inconsistency will cause issues.",
+      "recommendation": "Normalize all tool handlers to return the same type (either all dicts or all JSON strings). Let Hermes handle serialization if it expects dicts.",
+      "confidence": 0.70
+    },
+    {
+      "severity": "observation",
+      "id": "ANR-011",
+      "title": "Dashboard WebSocket streaming functions exist but are never called",
+      "location": "plugins/dashboard/websocket.py:117-139",
+      "description": "The functions stream_zeus_response() and stream_system_event() are defined but never called from anywhere in the codebase. They are not integrated with Zeus's response streaming or the Supervisor's lifecycle events. The WebSocket endpoint accepts connections but receives no broadcasts.",
+      "suggestion": "Integrate stream_zeus_response() with Zeus's response generation and stream_system_event() with Supervisor's profile lifecycle events. Or remove the unused functions until Phase 2+ integration.",
+      "confidence": 0.90
+    },
+    {
+      "severity": "observation",
+      "id": "ANR-012",
+      "title": "Revolt adapter routes all messages to Zeus — no direct specialist access",
+      "location": "plugins/revolt/routing.py:14",
+      "description": "All Revolt messages route to the Zeus profile by default. Users cannot directly message a specialist profile (e.g., /chronos or @chronos) without going through Zeus first. This is by design for Phase 1 but limits agent accessibility for users who know which specialist they want.",
+      "suggestion": "Consider adding command-based routing (e.g., /chronos <query>) in Phase 2 so users can bypass Zeus for known-specialist queries.",
+      "confidence": 0.80
+    },
+    {
+      "severity": "observation",
+      "id": "ANR-013",
+      "title": "No tool for agents to discover available profiles or their capabilities",
+      "location": "profiles/*/config.yaml, plugins/supervisor/lifecycle.py",
+      "description": "Agents have no tool to discover what other profiles exist, what their capabilities are, or whether they are running. Zeus's system prompt hardcodes the list of 8 specialist profiles, but this is static text, not a discoverable capability. A new agent joining the system would not know about other agents.",
+      "suggestion": "Add a discover_profiles tool (in the supervisor toolset) that returns the list of available profiles, their run_mode, current status, and domain expertise. This enables dynamic discovery rather than static configuration.",
+      "confidence": 0.75
+    },
+    {
+      "severity": "observation",
+      "id": "ANR-014",
+      "title": "plugins/zeus/profile/config.yaml is a duplicate of profiles/zeus/config.yaml",
+      "location": "plugins/zeus/profile/config.yaml vs profiles/zeus/config.yaml",
+      "description": "The Zeus profile config exists in two locations: profiles/zeus/config.yaml (the active config) and plugins/zeus/profile/config.yaml (a reference template shipped with the plugin). They are nearly identical but the plugin version is missing the comment about Hermes toolsets. If they diverge, it will cause confusion.",
+      "suggestion": "Either remove the duplicate or make the plugin version a symlink to the profiles version. Add a comment explaining the relationship.",
+      "confidence": 0.90
+    },
+    {
+      "severity": "observation",
+      "id": "ANR-015",
+      "title": "Dashboard auth is single-user with first-login password setup",
+      "location": "plugins/dashboard/auth.py:120-149",
+      "description": "The Dashboard uses a simple single-user auth model where the first login sets the password hash. This is appropriate for a local development tool but has no agent equivalent. An agent cannot authenticate to the Dashboard API.",
+      "suggestion": "This is intentionally human-only (auth ceremony). No action needed unless agents need to access Dashboard endpoints programmatically in the future.",
+      "confidence": 0.85
+    }
+  ],
+  "residual_risks": [
+    {
+      "id": "RR-001",
+      "risk": "share_knowledge plugin completely non-functional",
+      "impact": "All 10 profiles list share_knowledge in their toolsets. Without the tool being registered, cross-agent knowledge sharing is broken. Agents cannot write, query, or delete shared facts. This is the core data-sharing mechanism for the entire Olympus system.",
+      "mitigation": "Fix ANR-001 (import) and ANR-002 (registration) before any deployment."
+    },
+    {
+      "id": "RR-002",
+      "risk": "Supervisor tools registered but not enabled for any profile",
+      "impact": "The 4 Supervisor tools (start_profile, stop_profile, health_check, idle_status) are registered in the 'supervisor' toolset but no profile has 'supervisor' in its toolsets. Background threads run automatically, but no agent can explicitly manage profiles. If a profile crashes and the health monitor fails to restart it, no agent can manually intervene.",
+      "mitigation": "Add 'supervisor' to Zeus's toolsets so Zeus can manage profile lifecycle."
+    },
+    {
+      "id": "RR-003",
+      "risk": "Tool schema format inconsistency may cause registration failures",
+      "impact": "If Hermes ctx.register_tool() expects a specific schema format, tools using the wrong format will silently fail to register or will be called with incorrect parameters. The share_knowledge schema uses a different format than zeus and supervisor schemas.",
+      "mitigation": "Test plugin loading with Hermes v0.14.0 to verify all tools register correctly."
+    },
+    {
+      "id": "RR-004",
+      "risk": "Tool return type inconsistency may cause handler failures",
+      "impact": "share_knowledge returns JSON strings while zeus and supervisor return Python dicts. If Hermes expects a consistent type, some tools will fail to return results to the agent.",
+      "mitigation": "Test each tool's return value through Hermes to verify the agent receives the expected output."
+    },
+    {
+      "id": "RR-005",
+      "risk": "Dashboard WebSocket streaming is non-functional",
+      "impact": "The WebSocket endpoint accepts connections but never broadcasts any events. Users connecting to /ws will receive a 'connected' message but no real-time data. This is a broken feature, not just a missing one.",
+      "mitigation": "Either integrate the streaming functions with Zeus and Supervisor, or remove the WebSocket endpoint until Phase 2."
+    }
+  ],
+  "testing_gaps": [
+    {
+      "id": "TG-001",
+      "gap": "No test imports plugins.share_knowledge module",
+      "description": "The test suite (tests/test_integration.py, tests/test_share_knowledge.py) never imports the share_knowledge plugin's __init__.py. The SPEC ImportError (ANR-001) would be caught immediately by `import plugins.share_knowledge` but no test does this.",
+      "suggestion": "Add a test that imports each plugin's __init__.py to verify load-time correctness."
+    },
+    {
+      "id": "TG-002",
+      "gap": "No test verifies ctx.register_tool() is called for each plugin",
+      "description": "Tests verify plugin.yaml files exist and are valid, but do not verify that each plugin's register() function actually calls ctx.register_tool() with the expected tools. The share_knowledge plugin's missing registration (ANR-002) would be caught by this test.",
+      "suggestion": "Add a test that mocks ctx and calls each plugin's register(ctx), then verifies the expected tools were registered."
+    },
+    {
+      "id": "TG-003",
+      "gap": "No test verifies tool schema format consistency",
+      "description": "Tests do not verify that all tool schemas use the same format. The inconsistency between share_knowledge (wrapped format) and zeus/supervisor (bare format) would be caught by a schema validation test.",
+      "suggestion": "Add a test that loads all plugin schemas and verifies they use the same format."
+    },
+    {
+      "id": "TG-004",
+      "gap": "No test verifies tool return type consistency",
+      "description": "Tests do not verify that all tool handlers return the same type. The inconsistency between share_knowledge (JSON strings) and zeus/supervisor (dicts) would be caught by a return type test.",
+      "suggestion": "Add a test that calls each tool handler with mock args and verifies the return type is consistent."
+    },
+    {
+      "id": "TG-005",
+      "gap": "No test verifies Supervisor tools are enabled in any profile's toolsets",
+      "description": "Tests verify profile configs have valid toolsets, but do not verify that the tools listed in toolsets actually correspond to registered tools. The gap where 'supervisor' is not in any profile's toolsets would be caught by this test.",
+      "suggestion": "Add a test that cross-references profile toolsets against registered tools from all plugins."
+    },
+    {
+      "id": "TG-006",
+      "gap": "No test verifies Dashboard WebSocket actually broadcasts events",
+      "description": "Tests verify the WebSocket module exists and has the right classes/methods, but do not test that events are actually broadcast to connected clients. The unused stream_zeus_response() and stream_system_event() functions would be caught by this test.",
+      "suggestion": "Add an integration test that connects to the WebSocket, triggers an event, and verifies the event is received."
+    }
+  ],
+  "noun_test": {
+    "nouns": [
+      {
+        "noun": "profile",
+        "context_injection": "partial",
+        "action_parity": "yes",
+        "discoverable_in_prompt": "yes",
+        "notes": "Profiles are listed in Zeus's system prompt. Supervisor tools can start/stop/check profiles. But no tool to discover profiles dynamically."
+      },
+      {
+        "noun": "knowledge fact",
+        "context_injection": "no",
+        "action_parity": "no",
+        "discoverable_in_prompt": "no",
+        "notes": "CRITICAL: share_knowledge tool is not registered. Agents cannot write, query, or delete facts. The tool is not documented in any system prompt."
+      },
+      {
+        "noun": "routing decision",
+        "context_injection": "yes",
+        "action_parity": "yes",
+        "discoverable_in_prompt": "yes",
+        "notes": "Zeus has routing tool and the system prompt describes specialist profiles. But the routing logic is hardcoded, not discoverable."
+      },
+      {
+        "noun": "chip-in",
+        "context_injection": "yes",
+        "action_parity": "yes",
+        "discoverable_in_prompt": "yes",
+        "notes": "Zeus has chip_in tool and the system prompt describes the chip-in workflow. But the polling logic is hardcoded."
+      },
+      {
+        "noun": "health status",
+        "context_injection": "no",
+        "action_parity": "partial",
+        "discoverable_in_prompt": "no",
+        "notes": "Supervisor has health_check tool but it's not enabled in any profile's toolsets. Dashboard shows health via web UI but agents cannot access it."
+      },
+      {
+        "noun": "dashboard data",
+        "context_injection": "no",
+        "action_parity": "no",
+        "discoverable_in_prompt": "no",
+        "notes": "Dashboard serves health, wiki, calendar, contacts, preferences via web endpoints. No agent tools exist for this data."
+      },
+      {
+        "noun": "message (Revolt)",
+        "context_injection": "yes",
+        "action_parity": "yes",
+        "discoverable_in_prompt": "yes",
+        "notes": "Revolt adapter routes messages to Zeus. Platform adapter pattern, not a tool. Messages flow through Hermes gateway."
+      },
+      {
+        "noun": "idle state",
+        "context_injection": "no",
+        "action_parity": "partial",
+        "discoverable_in_prompt": "no",
+        "notes": "Supervisor has idle_status tool but it's not enabled in any profile's toolsets. Background thread enforces idle TTL automatically."
+      }
+    ]
+  },
+  "score": {
+    "must_have_capabilities": 8,
+    "must_have_agent_accessible": 4,
+    "must_have_percentage": 50,
+    "should_have_capabilities": 6,
+    "should_have_agent_accessible": 2,
+    "should_have_percentage": 33,
+    "verdict": "NEEDS WORK",
+    "verdict_explanation": "Two critical bugs (ANR-001, ANR-002) make the share_knowledge plugin completely non-functional, breaking the core data-sharing mechanism for all 10 profiles. The routing and chip_in tools are workflow tools rather than primitives (ANR-003, ANR-004). Supervisor tools are registered but not enabled for any profile (ANR-006). Dashboard data is human-only with no agent-accessible equivalent (ANR-005). The architecture is fundamentally sound — shared workspace, plugin-based tool registration, profile-based isolation — but the implementation has critical gaps that must be fixed before Phase 1 can be considered complete."
+  }
+}

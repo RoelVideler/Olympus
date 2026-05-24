@@ -1,0 +1,162 @@
+{
+  "reviewer": "security",
+  "findings": [
+    {
+      "title": "WebSocket endpoint has no authentication check",
+      "severity": "P0",
+      "file": "plugins/dashboard/websocket.py",
+      "line": 72,
+      "confidence": 0.9,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "The `handle_websocket` function at line 72 accepts WebSocket connections without any authentication check. While `auth_middleware` is registered on the aiohttp app, aiohttp middleware does NOT run for WebSocket upgrade requests — the `ws.prepare(request)` call bypasses middleware and establishes the connection directly. Any unauthenticated client can connect to `/ws`, receive real-time Zeus response chunks, system events, and potentially sensitive data broadcast to all clients.",
+      "evidence": [
+        "plugins/dashboard/websocket.py:72 — `handle_websocket` has no cookie/session check",
+        "plugins/dashboard/websocket.py:78 — `await ws.prepare(request)` establishes WS without auth gate",
+        "plugins/dashboard/__init__.py:45 — middleware is registered but aiohttp skips middleware for WS upgrades"
+      ],
+      "suggested_fix": "Add session validation at the top of `handle_websocket`: check `request.cookies.get(COOKIE_NAME)` and call `is_session_valid()` before `ws.prepare()`. Return an HTTP 401 response if the session is invalid, preventing the WebSocket upgrade."
+    },
+    {
+      "title": "Revolt user allowlist documented but not enforced — any user can interact with the bot",
+      "severity": "P0",
+      "file": "plugins/revolt/adapter.py",
+      "line": 226,
+      "confidence": 0.95,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "The module docstring (line 29) documents `REVOLT_ALLOWED_USERS` as a comma-separated allowlist of user IDs, and `REVOLT_ALLOW_ALL_USERS` for dev mode. However, `_on_message` (line 226) processes messages from ANY Revolt user without checking an allowlist. Any user on the Revolt server can send messages that get routed to Zeus, potentially triggering tool calls, accessing knowledge, or starting/stopping profiles. This is a complete authorization bypass.",
+      "evidence": [
+        "plugins/revolt/adapter.py:29 — `REVOLT_ALLOWED_USERS` documented in docstring",
+        "plugins/revolt/adapter.py:226-285 — `_on_message` has no allowlist check, only skips bot's own messages",
+        "No `REVOLT_ALLOWED_USERS` or `REVOLT_ALLOW_ALL_USERS` env var is read anywhere in the adapter"
+      ],
+      "suggested_fix": "Read `REVOLT_ALLOWED_USERS` and `REVOLT_ALLOW_ALL_USERS` env vars in `__init__`. In `_on_message`, check `user_id` against the allowlist before calling `self.handle_message()`. Reject messages from unauthorized users with a log warning."
+    },
+    {
+      "title": "Path traversal in Supervisor PID file via profile name",
+      "severity": "P1",
+      "file": "plugins/supervisor/lifecycle.py",
+      "line": 34,
+      "confidence": 0.85,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "The `_pid_file` function constructs a file path as `_PID_DIR / f\"{profile}.pid\"` without sanitizing the profile name. If the profile name contains path traversal sequences (e.g., `../../etc/cron.d/evil`), the PID file can be written outside the intended `~/.hermes/supervisor/pids/` directory. The profile name flows from Zeus tool calls through `supervisor/__init__.py:_handle_start_profile` → `api.start_profile` → `lifecycle.start_profile` → `_write_pid`. While the subprocess call uses a list (preventing shell injection), the PID file write is vulnerable to directory traversal.",
+      "evidence": [
+        "plugins/supervisor/lifecycle.py:34 — `_pid_file` uses unsanitized profile name in path construction",
+        "plugins/supervisor/lifecycle.py:82-88 — `_write_pid` writes to the constructed path",
+        "plugins/supervisor/__init__.py:95 — profile name comes directly from tool args with no validation",
+        "Profile name schema has no pattern/maxLength constraint"
+      ],
+      "suggested_fix": "Validate profile names against a whitelist pattern (e.g., `^[a-zA-Z][a-zA-Z0-9_-]{0,63}$`) in `start_profile` and `stop_profile` before any filesystem or subprocess operations. Reject names containing `..`, `/`, or `\\`."
+    },
+    {
+      "title": "Password stored with unsalted SHA-256 — vulnerable to brute force and rainbow tables",
+      "severity": "P1",
+      "file": "plugins/dashboard/auth.py",
+      "line": 137,
+      "confidence": 0.95,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The login handler uses `hashlib.sha256(password.encode()).hexdigest()` for password hashing (lines 137, 143). SHA-256 is a fast cryptographic hash, not a password hashing function. It has no salt and no work factor, making it trivially vulnerable to brute-force attacks and rainbow table lookups. If the password file `~/.hermes/.dashboard_password` is ever read (e.g., via path traversal or misconfigured permissions), the password can be cracked instantly.",
+      "evidence": [
+        "plugins/dashboard/auth.py:137 — `hashlib.sha256(password.encode()).hexdigest()` for comparison",
+        "plugins/dashboard/auth.py:143 — same for initial password storage",
+        "No salt is generated or stored with the hash"
+      ],
+      "suggested_fix": "Use `hashlib.pbkdf2_hmac('sha256', password, salt, 100000)` with a random 16-byte salt stored alongside the hash, or use `bcrypt` or `argon2` if available as dependencies. Store as `salt:hash` format."
+    },
+    {
+      "title": "No rate limiting on login endpoint — brute force attack possible",
+      "severity": "P2",
+      "file": "plugins/dashboard/auth.py",
+      "line": 120,
+      "confidence": 0.9,
+      "autofix_class": "manual",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The `handle_login` endpoint accepts unlimited login attempts with no rate limiting, account lockout, or exponential backoff. An attacker can brute-force the password by sending rapid POST requests to `/api/login`. Combined with the weak SHA-256 hashing (finding above), this makes password cracking practical even for moderately strong passwords.",
+      "evidence": [
+        "plugins/dashboard/auth.py:120-149 — `handle_login` has no rate limiting logic",
+        "No in-memory or persistent attempt counter exists",
+        "No delay or lockout after failed attempts"
+      ],
+      "suggested_fix": "Implement a simple in-memory rate limiter (e.g., max 5 attempts per minute per IP) using a sliding window counter. Add exponential backoff after consecutive failures."
+    },
+    {
+      "title": "Session cookie missing Secure flag — cookie sent over HTTP",
+      "severity": "P2",
+      "file": "plugins/dashboard/auth.py",
+      "line": 110,
+      "confidence": 0.85,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The `set_session_cookie` function sets `httponly=True` and `samesite=\"Strict\"` but omits `secure=True`. The dashboard defaults to binding on `127.0.0.1:8080` over plain HTTP (no TLS). While localhost reduces risk, if the dashboard is ever exposed on a network interface or behind a reverse proxy that terminates TLS, the session cookie would be sent over unencrypted connections, enabling session hijacking via network sniffing.",
+      "evidence": [
+        "plugins/dashboard/auth.py:110-117 — `response.set_cookie` lacks `secure=True`",
+        "plugins/dashboard/__init__.py:35 — `DEFAULT_HOST = \"127.0.0.1\"` (HTTP, no TLS)"
+      ],
+      "suggested_fix": "Add `secure=True` to `set_session_cookie`, and make it conditional on a `DASHBOARD_SECURE_COOKIE` env var or detect HTTPS from the request scheme. For local-only use, document that the cookie is HTTP-only by design."
+    },
+    {
+      "title": "GraphQL fallback parser uses substring matching — imprecise field resolution",
+      "severity": "P3",
+      "file": "plugins/dashboard/graphql.py",
+      "line": 126,
+      "confidence": 0.75,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The `_execute_query` fallback parser uses `if field in query_str` (substring match) to determine which fields to resolve. This means a query containing the substring \"health\" anywhere (even in a comment or string value) would trigger the health resolver. While this doesn't lead to SQL injection (queries are parameterized), it causes incorrect query behavior and could leak data the caller didn't intend to request.",
+      "evidence": [
+        "plugins/dashboard/graphql.py:126-128 — `if field in query_str` for each field name",
+        "No proper GraphQL parsing or tokenization"
+      ],
+      "suggested_fix": "Use a proper regex or tokenizer to match field names at word boundaries, or integrate a lightweight GraphQL parser library."
+    },
+    {
+      "title": "Database query errors leak internal structure in HTTP responses",
+      "severity": "P3",
+      "file": "plugins/dashboard/api.py",
+      "line": 87,
+      "confidence": 0.7,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "Multiple API handlers return `str(e)` from SQLite errors directly in HTTP 500 responses (e.g., line 87, 121, 149, 173, 197). These error messages can reveal table names, column names, and database structure to authenticated attackers, aiding further exploitation.",
+      "evidence": [
+        "plugins/dashboard/api.py:87 — `\"error\": str(e)` in health endpoint",
+        "plugins/dashboard/api.py:121 — same pattern in wiki endpoint",
+        "plugins/dashboard/api.py:149, 173, 197 — same pattern repeated"
+      ],
+      "suggested_fix": "Return a generic error message to the client (e.g., \"Internal server error\") and log the detailed error server-side only."
+    }
+  ],
+  "residual_risks": [
+    "The session signing secret is stored in `~/.hermes/.dashboard_secret` with 0o600 permissions, but if the home directory is shared or backed up insecurely, the secret could be extracted to forge session cookies.",
+    "The GraphQL endpoint exposes all data types (health, wiki, calendar, contacts, preferences) in a single query. An authenticated user with a valid session can dump all dashboard data in one request — this is by design but increases blast radius if a session is compromised.",
+    "The Revolt bot token is stored in memory and passed as an HTTP header (`x-bot-token`) on every request. If the aiohttp session is logged or dumped, the token could be extracted.",
+    "Profile names are used in log messages (e.g., `logger.info(\"Started profile %s (pid %d)\", profile, proc.pid)`). A malicious profile name could inject log forging characters or exploit log aggregation systems."
+  ],
+  "testing_gaps": [
+    "No test verifies that unauthenticated requests to `/ws` are rejected with 401",
+    "No test verifies that messages from non-allowlisted Revolt users are rejected",
+    "No test verifies that profile names with path traversal sequences (`../`) are rejected by the supervisor",
+    "No test verifies rate limiting behavior on the login endpoint",
+    "No test verifies that the session cookie has the correct flags (HttpOnly, SameSite, Secure)",
+    "No test verifies that SQL error messages are sanitized in API responses"
+  ]
+}

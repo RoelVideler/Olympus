@@ -1,0 +1,368 @@
+{
+  "reviewer": "kieran-python",
+  "findings": [
+    {
+      "title": "GRAPHENE_AVAILABLE is always True even when graphene import fails",
+      "severity": "P0",
+      "file": "plugins/dashboard/graphql.py",
+      "line": 23,
+      "confidence": 0.95,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The fallback flag is set to True in the except block, meaning GRAPHENE_AVAILABLE is True regardless of whether graphene imported successfully. Any downstream code checking this flag will get the wrong answer, and the graphene=None assignment on line 24 will cause AttributeError if graphene features are used.",
+      "evidence": [
+        "Line 21: GRAPHENE_AVAILABLE = True (correct, inside try)",
+        "Line 23: GRAPHENE_AVAILABLE = True (BUG — should be False, inside except)"
+      ],
+      "suggested_fix": "Change line 23 to: GRAPHENE_AVAILABLE = False"
+    },
+    {
+      "title": "get_db() return type annotation does not include None",
+      "severity": "P1",
+      "file": "plugins/dashboard/api.py",
+      "line": 38,
+      "confidence": 0.9,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The function returns None when the database file does not exist (line 42), but the return type annotation says sqlite3.Connection. This misleads static analysis tools and callers who may not check for None. Every caller does check for None, but the type contract is wrong.",
+      "evidence": [
+        "Line 38: def get_db() -> sqlite3.Connection:",
+        "Line 42: return None"
+      ],
+      "suggested_fix": "Change return type to: def get_db() -> Optional[sqlite3.Connection]:"
+    },
+    {
+      "title": "aiohttp session assigned inside async with block closes immediately after authenticate()",
+      "severity": "P0",
+      "file": "plugins/revolt/client.py",
+      "line": 55,
+      "confidence": 0.85,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "The aiohttp.ClientSession is created inside an `async with` block (line 55) and assigned to self._session (line 56). When the `async with` block exits at line 75, the session is closed. This means all subsequent calls (send_message, send_typing, etc.) will use a closed session and fail. The session should be created without the context manager, or the entire client lifecycle should be managed differently.",
+      "evidence": [
+        "Line 55: async with aiohttp.ClientSession() as session:",
+        "Line 56: self._session = session",
+        "Line 75: (end of async with block — session closes here)",
+        "Lines 91-122: send_message uses self._session which is now closed"
+      ],
+      "suggested_fix": "Remove the `async with` wrapper. Create the session directly: self._session = aiohttp.ClientSession(). The close() method on line 238 already handles cleanup."
+    },
+    {
+      "title": "handle_events callback type annotation is not Awaitable",
+      "severity": "P1",
+      "file": "plugins/revolt/client.py",
+      "line": 204,
+      "confidence": 0.9,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The callback parameter is typed as Callable[[Dict[str, Any]], None] but is awaited on line 228 (`await callback(event)`). The correct type should be Callable[[Dict[str, Any]], Awaitable[None]] or the callback should not be awaited. This mismatch will cause type checker errors and misleads callers about the expected callback signature.",
+      "evidence": [
+        "Line 204: async def handle_events(self, callback: Callable[[Dict[str, Any]], None]) -> None:",
+        "Line 228: await callback(event)"
+      ],
+      "suggested_fix": "Change callback type to: Callable[[Dict[str, Any]], Awaitable[None]]"
+    },
+    {
+      "title": "Module-level side effect: _SECRET generated on import",
+      "severity": "P1",
+      "file": "plugins/dashboard/auth.py",
+      "line": 43,
+      "confidence": 0.85,
+      "autofix_class": "manual",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The _generate_secret() function runs at module import time (line 43), which creates a file on disk (~/.hermes/.dashboard_secret) just from importing the module. This makes the module hard to test, causes side effects during import, and will fail in environments where ~/.hermes is not writable. Lazy initialization would be cleaner.",
+      "evidence": [
+        "Line 27-40: _generate_secret() creates files on disk",
+        "Line 43: _SECRET = _generate_secret() — runs at import time"
+      ],
+      "suggested_fix": "Use lazy initialization: _SECRET = None, and a _get_secret() function that generates on first call."
+    },
+    {
+      "title": "auth_middleware handler parameter lacks precise type annotation",
+      "severity": "P2",
+      "file": "plugins/dashboard/auth.py",
+      "line": 87,
+      "confidence": 0.8,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The handler parameter is typed as bare Callable, which loses all information about the expected signature. aiohttp middleware handlers are Callable[[web.Request], Awaitable[web.Response]]. Using the precise type improves static analysis and IDE support.",
+      "evidence": [
+        "Line 87: async def auth_middleware(request: web.Request, handler: Callable) -> web.Response:"
+      ],
+      "suggested_fix": "Change to: handler: Callable[[web.Request], Awaitable[web.Response]]"
+    },
+    {
+      "title": "GraphQL 'Type' classes are misleadingly named — they are not types",
+      "severity": "P2",
+      "file": "plugins/dashboard/graphql.py",
+      "line": 29,
+      "confidence": 0.75,
+      "autofix_class": "manual",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "Classes like HealthType, WikiEntryType, CalendarEventType, ContactType, and PreferencesType are not GraphQL types — they do not inherit from graphene.ObjectType or any base class. They are just namespaces for static methods that run SQL queries. The 'Type' suffix misleads readers into thinking these are schema types. Better names would be HealthQuery, WikiQuery, etc.",
+      "evidence": [
+        "Line 29: class HealthType: — no base class, just a static method",
+        "Line 51: class WikiEntryType: — same pattern",
+        "Line 70: class CalendarEventType: — same pattern",
+        "Line 84: class ContactType: — same pattern",
+        "Line 98: class PreferencesType: — same pattern"
+      ],
+      "suggested_fix": "Rename to HealthQuery, WikiQuery, CalendarQuery, ContactsQuery, PreferencesQuery. Or convert to module-level functions since these classes carry no state."
+    },
+    {
+      "title": "Dead code: status_code always 200 regardless of errors",
+      "severity": "P2",
+      "file": "plugins/dashboard/graphql.py",
+      "line": 175,
+      "confidence": 0.9,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The ternary expression `200 if 'errors' not in result else 200` always evaluates to 200. This is either dead code (the conditional was intended to do something different) or a copy-paste error. If errors should return a different status code, the logic is wrong. If GraphQL always returns 200, the conditional should be removed.",
+      "evidence": [
+        "Line 175: status_code = 200 if \"errors\" not in result else 200"
+      ],
+      "suggested_fix": "Remove the conditional: status_code = 200  # GraphQL convention: always 200, errors in body"
+    },
+    {
+      "title": "_env_enablement uses Python 3.10+ union syntax without __future__ import",
+      "severity": "P1",
+      "file": "plugins/revolt/adapter.py",
+      "line": 367,
+      "confidence": 0.85,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The function signature uses `dict | None` (Python 3.10+ syntax) but the file does not have `from __future__ import annotations`. This will cause a SyntaxError on Python 3.9. Other files in the project use `from __future__ import annotations` consistently.",
+      "evidence": [
+        "Line 367: def _env_enablement() -> dict | None:",
+        "No `from __future__ import annotations` at top of file"
+      ],
+      "suggested_fix": "Add `from __future__ import annotations` at the top of the file, or change to `Optional[dict]`"
+    },
+    {
+      "title": "Bare dict type annotations in share_knowledge tools.py",
+      "severity": "P2",
+      "file": "plugins/share_knowledge/tools.py",
+      "line": 173,
+      "confidence": 0.8,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "Multiple functions use bare `dict` instead of `dict[str, Any]`: _handle_share_knowledge (line 173), _write (line 221), _query (line 249), _delete (line 281). Also tool_error (line 20) and tool_result (line 27) lack type annotations on their parameters. These are public-facing functions that process structured data — the types should be explicit.",
+      "evidence": [
+        "Line 20: def tool_error(message, **extra) -> str:",
+        "Line 27: def tool_result(data=None, **kwargs) -> str:",
+        "Line 173: def _handle_share_knowledge(args: dict, scope_config: dict | None = None, **kw) -> str:",
+        "Line 221: def _write(conn: sqlite3.Connection, scope: str, domain: str, args: dict, profile: str) -> str:",
+        "Line 249: def _query(conn: sqlite3.Connection, scope: str, domain: str, args: dict) -> str:",
+        "Line 281: def _delete(..., args: dict, ...) -> str:"
+      ],
+      "suggested_fix": "Annotate all `dict` parameters as `dict[str, Any]`. Add type hints to tool_error and tool_result parameters."
+    },
+    {
+      "title": "Supervisor handler functions use bare dict type for args",
+      "severity": "P2",
+      "file": "plugins/supervisor/__init__.py",
+      "line": 94,
+      "confidence": 0.8,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "All four handler functions (_handle_start_profile, _handle_stop_profile, _handle_health_check, _handle_idle_status) use `args: dict` instead of `args: dict[str, Any]`. These are tool handlers that receive structured input — the type should be explicit for readability and static analysis.",
+      "evidence": [
+        "Line 94: def _handle_start_profile(args: dict, **kw) -> Dict[str, Any]:",
+        "Line 98: def _handle_stop_profile(args: dict, **kw) -> Dict[str, Any]:",
+        "Line 102: def _handle_health_check(args: dict, **kw) -> Dict[str, Any]:",
+        "Line 107: def _handle_idle_status(args: dict, **kw) -> Dict[str, Any]:"
+      ],
+      "suggested_fix": "Change all `args: dict` to `args: dict[str, Any]`"
+    },
+    {
+      "title": "register() functions lack ctx type annotation across multiple plugins",
+      "severity": "P2",
+      "file": "plugins/dashboard/__init__.py",
+      "line": 103,
+      "confidence": 0.75,
+      "autofix_class": "advisory",
+      "owner": "human",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The register() entry point in dashboard/__init__.py (line 103), supervisor/__init__.py (line 125), zeus/__init__.py (line 13), and revolt/adapter.py (line 390) all have `ctx` without a type annotation. This is the primary plugin entry point — knowing what ctx provides is critical for understanding the plugin contract. If a Protocol or TypedDict exists for ctx, it should be used.",
+      "evidence": [
+        "plugins/dashboard/__init__.py:103: def register(ctx) -> None:",
+        "plugins/supervisor/__init__.py:125: def register(ctx) -> None:",
+        "plugins/zeus/__init__.py:13: def register(ctx) -> None:",
+        "plugins/revolt/adapter.py:390: def register(ctx) -> None:"
+      ],
+      "suggested_fix": "Define a Protocol for the ctx interface (e.g., PluginContext) and annotate all register() functions with it."
+    },
+    {
+      "title": "HealthMonitor._check_all accesses info['status'] without key existence check",
+      "severity": "P2",
+      "file": "plugins/supervisor/health.py",
+      "line": 72,
+      "confidence": 0.75,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "Line 72 accesses `info['status']` directly. If lifecycle.list_profiles() returns a dict where any profile entry is missing the 'status' key, this will raise KeyError. Using info.get('status') would be safer, consistent with how run_mode is accessed on line 74.",
+      "evidence": [
+        "Line 72: if info[\"status\"] == \"crashed\":",
+        "Line 74: run_mode = info.get(\"run_mode\", \"on-demand\")  # uses .get() here but not above"
+      ],
+      "suggested_fix": "Change to: if info.get('status') == 'crashed':"
+    },
+    {
+      "title": "Supervisor modules call private functions across module boundaries",
+      "severity": "P2",
+      "file": "plugins/supervisor/health.py",
+      "line": 79,
+      "confidence": 0.8,
+      "autofix_class": "manual",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "health.py calls `lifecycle._clear_pid(profile)` (line 79) and idle.py calls `lifecycle._config_file(profile)` (line 65). These are private functions (leading underscore) being called from sibling modules. If _config_file is part of the public interface, it should be renamed to config_file. If _clear_pid is needed externally, it should be public or there should be a public wrapper.",
+      "evidence": [
+        "plugins/supervisor/health.py:79: lifecycle._clear_pid(profile)",
+        "plugins/supervisor/idle.py:65: cfg = lifecycle._config_file(profile)"
+      ],
+      "suggested_fix": "Rename _config_file to config_file (it is used externally). For _clear_pid, either make it public or add a public wrapper in lifecycle.py."
+    },
+    {
+      "title": "import re inside function in error_handler.py",
+      "severity": "P3",
+      "file": "plugins/revolt/error_handler.py",
+      "line": 88,
+      "confidence": 0.85,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The `re` module is imported inside the parse_retry_after function (line 88). This is unnecessary — re is a stdlib module with no import cost concerns. Moving it to the top of the file follows standard Python conventions and makes the module's dependencies visible at a glance.",
+      "evidence": [
+        "Line 88: import re (inside parse_retry_after function)"
+      ],
+      "suggested_fix": "Move `import re` to the top of the file with other stdlib imports."
+    },
+    {
+      "title": "share_knowledge/__init__.py has no docstring",
+      "severity": "P3",
+      "file": "plugins/share_knowledge/__init__.py",
+      "line": 1,
+      "confidence": 0.9,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "Every other plugin __init__.py has a module-level docstring describing the plugin's purpose. share_knowledge/__init__.py has only imports and __all__. This breaks the pattern and provides no documentation for readers.",
+      "evidence": [
+        "plugins/share_knowledge/__init__.py: only 3 lines, no docstring",
+        "All other plugin __init__.py files have descriptive docstrings"
+      ],
+      "suggested_fix": "Add a module docstring: \"\"\"Share knowledge tool — cross-agent knowledge sharing via the Olympus database.\"\"\""
+    },
+    {
+      "title": "zeus/skills/__init__.py is empty",
+      "severity": "P3",
+      "file": "plugins/zeus/skills/__init__.py",
+      "line": 1,
+      "confidence": 0.9,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The file is completely empty (0 lines of content). It exists only to make the directory a package. At minimum it should have a docstring explaining what the skills subpackage contains, or the imports from routing.py and chip_in.py should be re-exported here for cleaner imports.",
+      "evidence": [
+        "plugins/zeus/skills/__init__.py: empty file"
+      ],
+      "suggested_fix": "Add a docstring or re-export the public symbols: from .routing import ROUTING_SCHEMA, handle_routing; from .chip_in import CHIP_IN_SCHEMA, handle_chip_in"
+    },
+    {
+      "title": "Lazy import of handle_login inside register_routes function",
+      "severity": "P3",
+      "file": "plugins/dashboard/api.py",
+      "line": 220,
+      "confidence": 0.7,
+      "autofix_class": "advisory",
+      "owner": "human",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The import `from .auth import handle_login` is inside the register_routes function (line 220). This is likely to avoid a circular import, but it is not documented. If there is a circular dependency, it should be resolved by restructuring, or at least documented with a comment explaining why the import is deferred.",
+      "evidence": [
+        "Line 220: from .auth import handle_login (inside function body)",
+        "Line 27-30: Other auth imports are at module level (auth_middleware)"
+      ],
+      "suggested_fix": "Add a comment explaining why this import is deferred, or move handle_login to the top-level import if the circular dependency has been resolved."
+    },
+    {
+      "title": "chip_in.py and routing.py use bare dict return type annotations",
+      "severity": "P2",
+      "file": "plugins/zeus/skills/chip_in.py",
+      "line": 96,
+      "confidence": 0.8,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "handle_chip_in (line 96) and handle_routing (line 124 in routing.py) use `dict[str, Any]` for return types but `args: dict` for input. The input should also be `dict[str, Any]` for consistency and clarity. Additionally, _call_profile_async returns `dict[str, Any]` but the inner dict structure is not documented.",
+      "evidence": [
+        "chip_in.py:96: def handle_chip_in(args: dict, **kw) -> dict[str, Any]:",
+        "routing.py:124: def handle_routing(args: dict, **kw) -> dict[str, Any]:"
+      ],
+      "suggested_fix": "Change `args: dict` to `args: dict[str, Any]` in both functions."
+    },
+    {
+      "title": "params list annotations use bare list type",
+      "severity": "P2",
+      "file": "plugins/dashboard/api.py",
+      "line": 104,
+      "confidence": 0.8,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "Lines 104 and 57 in api.py use `params: list = []` and similar bare list annotations. With `from __future__ import annotations` present, these should be `list[Any]` or `list[str]` for proper type checking.",
+      "evidence": [
+        "Line 104: params: list = []",
+        "graphql.py line 57: params: list = []"
+      ],
+      "suggested_fix": "Change to `params: list[str] = []` or `params: list[Any] = []`"
+    }
+  ],
+  "residual_risks": [
+    "The aiohttp session lifecycle bug in revolt/client.py (finding #3) means the entire Revolt adapter is non-functional after authentication. All send operations will fail with 'Session is closed' errors. This is the highest-risk finding in the review.",
+    "The GRAPHENE_AVAILABLE flag bug (finding #1) means any code path that checks this flag will behave incorrectly. Currently the fallback _execute_query is always used regardless, so the impact is limited to the misleading flag value.",
+    "Module-level side effects in auth.py (finding #5) make the dashboard plugin difficult to test in isolation and will fail in read-only environments.",
+    "Cross-module private function access in supervisor (finding #14) creates tight coupling between lifecycle.py, health.py, and idle.py. Refactoring lifecycle.py's private functions will break sibling modules."
+  ],
+  "testing_gaps": [
+    "No unit tests for dashboard API handlers (health, wiki, calendar, contacts, preferences endpoints). test_integration.py only tests raw SQL queries, not the actual HTTP handlers.",
+    "No unit tests for revolt adapter — the adapter.py, client.py, error_handler.py, identity.py, and routing.py modules have zero test coverage.",
+    "No unit tests for supervisor lifecycle functions (start_profile, stop_profile, get_profile_status). test_integration.py only checks that functions exist in source code.",
+    "No unit tests for zeus routing and chip_in skills. test_integration.py only verifies file existence and string matching in source.",
+    "No unit tests for dashboard auth middleware, WebSocket hub, or GraphQL handler.",
+    "test_share_knowledge.py uses a re-implementation of the tool logic (ShareKnowledgeTool class) rather than importing and testing the actual tools.py functions. This means the tests verify the test implementation, not the production code."
+  ]
+}

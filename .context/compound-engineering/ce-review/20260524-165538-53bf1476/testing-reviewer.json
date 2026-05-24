@@ -1,0 +1,375 @@
+{
+  "reviewer": "testing",
+  "findings": [
+    {
+      "title": "test_share_knowledge.py tests a duplicated inline wrapper, not the actual tools.py implementation",
+      "severity": "P0",
+      "file": "tests/test_share_knowledge.py",
+      "line": 9,
+      "confidence": 0.95,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "The ShareKnowledgeTool class (lines 9-57) is an inline reimplementation of the logic in plugins/share_knowledge/tools.py. It duplicates scope enforcement, write/query/delete logic, and SQLite interaction. Tests pass against this wrapper but provide ZERO confidence that the actual production code works. If tools.py has a bug (e.g., in _check_scope, _resolve_db_path, _ensure_schema, or the actual SQL queries), no test would catch it. This is worse than no test because it signals coverage while providing none.",
+      "evidence": [
+        "tests/test_share_knowledge.py defines class ShareKnowledgeTool with inline __call__ method duplicating write/query/delete logic",
+        "No import of plugins.share_knowledge.tools or _handle_share_knowledge anywhere in test files",
+        "grep for 'from plugins.share_knowledge' and 'import.*tools' in test files returns nothing",
+        "tools.py has 311 lines of production code with scope config loading, DB path validation, schema resolution, and profile identity — none exercised by tests"
+      ],
+      "suggested_fix": "Replace the inline ShareKnowledgeTool wrapper with direct calls to _handle_share_knowledge from plugins.share_knowledge.tools. Use a test-scoped db_path via the db_path fixture and pass scope_config dicts to test scope enforcement. This will test the actual production code path including _resolve_db_path, _ensure_schema, _get_calling_profile, _check_scope, _write, _query, and _delete."
+    },
+    {
+      "title": "Dashboard REST endpoints have zero integration tests — tests query SQLite directly instead of hitting aiohttp handlers",
+      "severity": "P0",
+      "file": "tests/test_integration.py",
+      "line": 525,
+      "confidence": 0.95,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "TestDashboardREST (lines 409-601) has 5 test methods that all connect directly to SQLite and run SELECT queries. They never instantiate the aiohttp app, never call handle_health/handle_wiki/handle_calendar/handle_contacts/handle_preferences, and never test the actual HTTP response format, status codes, error handling, or query parameter filtering. The actual api.py code has branches for: db not found (returns different JSON), sqlite3.Error catch blocks (returns 500), table-not-exist checks (calendar/contacts/preferences), and query parameter filtering (wiki endpoint with domain/scope). None of these are tested.",
+      "evidence": [
+        "test_health_endpoint_data (line 525): connects to SQLite directly, runs SELECT, never calls handle_health",
+        "test_wiki_endpoint_data (line 542): same pattern — direct SQL, no HTTP handler invocation",
+        "api.py handle_wiki (line 100-111): has domain/scope query parameter filtering logic — untested",
+        "api.py handle_calendar/contacts/preferences (lines 135-189): each has table-existence check branch — untested",
+        "api.py handle_health (line 82-88): sqlite3.Error catch block returns 500 — untested",
+        "api.py handle_not_implemented (line 202-207): returns 501 for deferred endpoints — untested"
+      ],
+      "suggested_fix": "Use aiohttp's TestClient (from aiohttp.test import TestServer, TestClient) to instantiate the app via _create_app() and make actual HTTP requests. Test: (1) GET /api/health returns correct JSON structure, (2) GET /api/wiki?domain=health filters correctly, (3) GET /api/wiki?scope=personal filters correctly, (4) deferred endpoints return 501, (5) error paths return appropriate status codes."
+    },
+    {
+      "title": "Dashboard auth module completely untested — session signing, middleware, and login handler have zero coverage",
+      "severity": "P0",
+      "file": "plugins/dashboard/auth.py",
+      "line": 1,
+      "confidence": 0.95,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "auth.py (149 lines) implements session cookie authentication with HMAC-SHA256 signing, TTL enforcement, middleware that rejects unauthenticated requests with 401, and a login handler with first-time password setup. None of this is tested. Critical untested branches: (1) _verify returns None for malformed cookies (line 56-57), (2) _verify returns None for signature mismatch (line 60-61), (3) is_session_valid returns False for expired sessions (line 81), (4) auth_middleware returns 401 for missing cookie (line 98-102), (5) auth_middleware allows HEAD /api/health through (line 94-95), (6) handle_login returns 400 for invalid JSON (line 124-125), (7) handle_login returns 400 for empty password (line 129-130), (8) handle_login returns 401 for wrong password (line 137-138), (9) handle_login stores password hash on first login (line 141-144).",
+      "evidence": [
+        "No test file imports or references plugins.dashboard.auth",
+        "auth_middleware is registered in _create_app (dashboard/__init__.py line 45) but no test exercises the middleware",
+        "handle_login is registered as POST /api/login (api.py line 221) but no test calls it",
+        "The _SECRET is generated at module load time from filesystem — tests cannot control it"
+      ],
+      "suggested_fix": "Add tests for: (1) _sign/_verify round-trip with valid and tampered signatures, (2) is_session_valid with expired payload, (3) auth_middleware rejecting requests without cookie, (4) auth_middleware allowing HEAD /api/health, (5) handle_login with valid/invalid/empty password, (6) handle_login first-time password storage. Use monkeypatch or env vars to control the secret file path for test isolation."
+    },
+    {
+      "title": "Revolt plugin (977 lines across 5 files) has zero tests — adapter, client, error handler, routing, identity all untested",
+      "severity": "P0",
+      "file": "plugins/revolt/adapter.py",
+      "line": 1,
+      "confidence": 0.95,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "The entire Revolt plugin is untested. This is 977 lines of new code across adapter.py (410), client.py (257), error_handler.py (94), routing.py (131), and identity.py (75). Critical untested logic: (1) RevoltAdapter.connect() — auth failure path sets fatal error (line 148-155), (2) _run_websocket() — reconnection loop with exponential backoff, auth error detection stops reconnecting (line 184-213), (3) _on_message() — DM vs channel type detection, bot self-message filtering, empty text filtering (line 226-285), (4) send() — message truncation at MAX_MESSAGE_LENGTH (line 319-324), client-not-initialized error (line 316-317), (5) RevoltErrorHandler.get_backoff() — exponential backoff calculation, max retries returns -1 (line 32-44), (6) RevoltMessageRouter.resolve_profile() — channel rules, group mention detection, DM default (line 53-68), (7) should_respond() — bot self-filter, DM always-respond, group mention check (line 98-113).",
+      "evidence": [
+        "No test file references plugins.revolt anywhere",
+        "grep for 'revolt' in test files returns zero matches",
+        "error_handler.py has pure functions (is_auth_error, parse_retry_after, RevoltErrorHandler) that are trivially testable but have no tests",
+        "routing.py has RevoltMessageRouter with deterministic logic (add_rule, resolve_profile, should_respond) — ideal for unit tests but none exist"
+      ],
+      "suggested_fix": "Start with the easiest-to-test modules: (1) error_handler.py — unit test is_auth_error with various exception strings, parse_retry_after with regex patterns, RevoltErrorHandler backoff sequence and reset, (2) routing.py — unit test RevoltMessageRouter.resolve_profile with channel rules, group mentions, DMs, and should_respond with bot-self filtering, (3) identity.py — unit test RevoltBotIdentity with config/env precedence, to_dict, presence_payload. Then add adapter.py tests with mocked RevoltClient for connect/disconnect/send paths."
+    },
+    {
+      "title": "Supervisor lifecycle, health, idle, and API modules have zero tests — process management logic completely untested",
+      "severity": "P0",
+      "file": "plugins/supervisor/lifecycle.py",
+      "line": 1,
+      "confidence": 0.95,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "The supervisor plugin manages process lifecycle via subprocess — starting/stopping profiles, tracking PIDs, health monitoring, and idle TTL enforcement. None of this is tested. Critical untested branches: (1) start_profile — already-running check (line 102-104), FileNotFoundError when hermes CLI missing (line 115-116), OSError (line 117-118), (2) stop_profile — not-running check (line 128-129), ProcessLookupError on SIGTERM (line 133-135), SIGKILL escalation (line 142-146), (3) get_profile_status — running vs crashed vs stopped branches (line 158-179), (4) list_profiles — iterates profiles directory (line 184-189), (5) HealthMonitor._check_all — crashed always-on restart vs non-always-on clear (line 72-79), (6) IdleEnforcer — state file load/save, TTL enforcement, per-profile TTL from config (idle.py lines 29-42, 99-131).",
+      "evidence": [
+        "TestSupervisorLifecycle in test_integration.py (line 283) only checks that module files exist and contain function name strings",
+        "No test imports plugins.supervisor.lifecycle, health, idle, or api",
+        "lifecycle.py uses subprocess.Popen which can be mocked for testing",
+        "idle.py uses file-based state (idle_state.json) which can be tested with tmp_path fixtures"
+      ],
+      "suggested_fix": "Add unit tests for: (1) lifecycle._pid_alive with mock os.kill, (2) lifecycle._read_pid/_write_pid with tmp_path for PID files, (3) lifecycle.start_profile with mocked subprocess.Popen, (4) lifecycle.stop_profile with mocked os.kill, (5) lifecycle.get_profile_status for running/crashed/stopped states, (6) idle.record_activity/get_idle_time/check_idle with tmp_path for state file, (7) idle.get_ttl_for_profile with mocked config files, (8) health.HealthMonitor with mocked lifecycle functions."
+    },
+    {
+      "title": "Zeus routing and chip_in skills have zero tests — domain matching, profile polling, and async chip-in logic untested",
+      "severity": "P0",
+      "file": "plugins/zeus/skills/routing.py",
+      "line": 1,
+      "confidence": 0.95,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "Zeus routing (156 lines) and chip_in (134 lines) are core orchestrator logic with zero test coverage. Untested branches: (1) _detect_domain — keyword matching against DOMAIN_MAP, returns 'unknown' for no match (line 101-105), (2) handle_routing — all_profiles=False with matched domain calls specialist (line 145-148), all_profiles=True polls all 8 specialists (line 150-154), NO_MATCH response filtering (line 147, 153), (3) _call_profile — subprocess.TimeoutExpired, FileNotFoundError, OSError all return None (line 120-121), (4) chip_in handle_chip_in — threshold filtering (line 123-124), JSON parse failure returns score 0.0 (line 89-90), asyncio.TimeoutError returns score 0.0 (line 92), (5) chip_in _call_profile_async — subprocess.run with async executor wrapper (line 64-93).",
+      "evidence": [
+        "TestZeusRouting in test_integration.py (line 343) only checks that routing.py exists and contains string keywords like 'def route' or 'domain_map'",
+        "TestZeusUnknownQuery (line 387) only checks that routing.py contains strings like 'default' or 'fallback'",
+        "No test imports plugins.zeus.skills.routing or plugins.zeus.skills.chip_in",
+        "routing.py _detect_domain is a pure function — trivially testable with parametrized inputs",
+        "chip_in.py handle_chip_in uses asyncio.run() which can be tested with mocked subprocess"
+      ],
+      "suggested_fix": "Add unit tests for: (1) _detect_domain with queries matching each domain keyword and an unknown query, (2) handle_routing with all_profiles=False (single specialist call) and all_profiles=True (all specialists), (3) handle_routing with NO_MATCH response filtering, (4) _call_profile with mocked subprocess returning success/failure/timeout, (5) chip_in handle_chip_in with mocked _call_profile_async returning various scores, (6) chip_in threshold filtering (score above/below threshold), (7) chip_in JSON parse failure handling."
+    },
+    {
+      "title": "Dashboard GraphQL endpoint completely untested — query parsing, field resolution, and error handling have no coverage",
+      "severity": "P1",
+      "file": "plugins/dashboard/graphql.py",
+      "line": 1,
+      "confidence": 0.95,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "graphql.py (182 lines) implements a lightweight GraphQL-like query parser with 5 type resolvers (HealthType, WikiEntryType, CalendarEventType, ContactType, PreferencesType). Untested branches: (1) handle_graphql — invalid JSON returns 400 (line 158-163), empty query returns 400 (line 168-172), (2) _execute_query — database not found returns error (line 118-120), field parsing for each of 5 types (line 126-145), wiki variables extraction (line 134-136), exception handling returns errors array (line 148-150), (3) WikiEntryType.resolve — domain/scope filtering (line 56-67), (4) CalendarEventType/ContactType/PreferencesType.resolve — table-not-exist returns empty (lines 78-79, 92-93, 106-107).",
+      "evidence": [
+        "No test file imports or references plugins.dashboard.graphql",
+        "register_graphql_route is called in __init__.py line 49 but no test exercises the /api/graphql endpoint",
+        "The _execute_query function is pure (takes query string, returns dict) — easily testable"
+      ],
+      "sized_fix": "Add tests for: (1) handle_graphql with invalid JSON body, (2) handle_graphql with empty query, (3) _execute_query requesting single field (health), (4) _execute_query requesting multiple fields (health + wiki), (5) _execute_query with wiki variables (domain/scope), (6) _execute_query with database not found, (7) WikiEntryType.resolve with domain/scope filters."
+    },
+    {
+      "title": "Dashboard WebSocket handler untested — connect/disconnect/broadcast, message handling, and streaming functions have no coverage",
+      "severity": "P1",
+      "file": "plugins/dashboard/websocket.py",
+      "line": 1,
+      "confidence": 0.95,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "websocket.py (144 lines) implements WebSocketHub with connect/disconnect/broadcast, plus handle_websocket, stream_zeus_response, and stream_system_event. Untested branches: (1) WebSocketHub.broadcast — iterates connections, catches send failures, cleans up dead connections (line 42-53), (2) handle_websocket — sends connected confirmation (line 84-88), handles subscribe message (line 96-100), handles ping message (line 101-102), handles invalid JSON (line 103-107), handles WSMsgType.ERROR (line 108-110), (3) stream_zeus_response — broadcasts zeus_chunk event (line 117-125), (4) stream_system_event — broadcasts system_event with event_type (line 128-139), (5) get_hub — singleton pattern (line 64-69).",
+      "evidence": [
+        "TestDashboardWebSocket in test_integration.py (line 608) only checks that websocket.py exists and contains string keywords like 'class WebSocketHub' and 'def connect'",
+        "No test imports plugins.dashboard.websocket or instantiates WebSocketHub",
+        "WebSocketHub is a pure class with no external dependencies — easily testable with mocked web.WebSocketResponse"
+      ],
+      "suggested_fix": "Add unit tests for: (1) WebSocketHub.connect/disconnect with connection_count property, (2) WebSocketHub.broadcast with mocked WebSocketResponse (success and failure paths), (3) WebSocketHub.broadcast dead connection cleanup, (4) stream_zeus_response broadcasts correct event structure, (5) stream_system_event broadcasts correct event structure, (6) get_hub singleton behavior."
+    },
+    {
+      "title": "Dashboard seed_data.py functions untested — individual seed functions and error rollback have no coverage",
+      "severity": "P2",
+      "file": "plugins/dashboard/seed_data.py",
+      "line": 1,
+      "confidence": 0.90,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "seed_data.py (204 lines) has 7 seed functions (ensure_schema, seed_profiles, seed_knowledge, seed_calendar, seed_contacts, seed_preferences, seed_all) plus get_connection. Untested branches: (1) seed_all — error path with conn.rollback (line 196-198), (2) get_connection — creates ~/.hermes directory (line 19), (3) ensure_schema — CREATE TABLE IF NOT EXISTS for 5 tables with constraints, (4) Each seed function inserts specific data — no test verifies the data is correctly inserted. While test_integration.py's seeded_db fixture (line 413) duplicates some of this logic, it doesn't test the actual seed_data.py functions.",
+      "evidence": [
+        "No test file imports plugins.dashboard.seed_data",
+        "test_integration.py TestDashboardREST.seeded_db fixture manually creates tables and inserts data, duplicating seed_data.py logic",
+        "seed_all() error rollback path (line 196-198) is untested"
+      ],
+      "suggested_fix": "Add tests for: (1) seed_all with tmp_path database, verify all tables populated, (2) ensure_schema creates all 5 tables, (3) seed_profiles inserts 10 profiles with correct data, (4) seed_all error path with mocked connection that raises on commit."
+    },
+    {
+      "title": "Revolt error_handler.py pure functions untested — backoff sequence, auth error detection, and rate limit parsing have no coverage",
+      "severity": "P1",
+      "file": "plugins/revolt/error_handler.py",
+      "line": 1,
+      "confidence": 0.95,
+      "autofix_class": "safe_auto",
+      "owner": "downstream-resolver",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "error_handler.py has 3 pure/testable functions with zero tests: (1) RevoltErrorHandler.get_backoff() — exponential backoff sequence (2, 4, 8, 16, 32), returns -1 after MAX_RETRIES (line 32-44), (2) is_auth_error() — checks 7 auth indicators in error string (line 65-75), (3) parse_retry_after() — regex extraction of retry-after value, default 5.0 (line 83-94). These are the easiest tests to write in the entire codebase and would provide immediate coverage of error handling logic used by the adapter.",
+      "evidence": [
+        "No test file imports plugins.revolt.error_handler",
+        "is_auth_error is a pure function taking Exception and returning bool — trivially testable",
+        "parse_retry_after is a pure function taking Exception and returning Optional[float] — trivially testable",
+        "RevoltErrorHandler has no external dependencies — get_backoff/reset/retry_count/is_exhausted all testable in isolation"
+      ],
+      "suggested_fix": "Add tests: (1) RevoltErrorHandler.get_backoff returns 2, 4, 8, 16, 32 for first 5 calls, then -1, (2) RevoltErrorHandler.reset resets counter, (3) is_auth_error returns True for '401', 'unauthorized', 'invalid token', etc., False for 'connection refused', (4) parse_retry_after returns extracted value from 'Retry-After: 30', returns 5.0 for '429 rate limit' without explicit value, returns None for non-rate-limit errors."
+    },
+    {
+      "title": "Revolt routing.py message router untested — channel rules, group mention detection, and should_respond logic have no coverage",
+      "severity": "P1",
+      "file": "plugins/revolt/routing.py",
+      "line": 1,
+      "confidence": 0.95,
+      "autofix_class": "safe_auto",
+      "owner": "downstream-resolver",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "routing.py (131 lines) has RevoltMessageRouter with deterministic logic that is ideal for unit testing but has zero coverage. Untested branches: (1) resolve_profile — channel rule match (line 56-57), group channel with bot mention returns default profile (line 62-64), group channel without mention returns empty string (line 65), DM returns default profile (line 68), (2) _is_bot_mentioned — <@user_id> format (line 76-77), @name format (line 80-81), no match returns False (line 84), (3) should_respond — bot-self returns False (line 99-100), DM returns True (line 105-106), channel with routing rule returns True (line 110-111), group without mention returns False (line 113).",
+      "evidence": [
+        "No test file imports plugins.revolt.routing",
+        "RevoltMessageRouter has no external dependencies — all methods take dicts and return strings/bools",
+        "reset_router() exists specifically for testing (line 128-131) but no test uses it"
+      ],
+      "suggested_fix": "Add tests: (1) resolve_profile with channel rule match, (2) resolve_profile with group channel + bot mention, (3) resolve_profile with group channel without mention, (4) resolve_profile with DM, (5) _is_bot_mentioned with <@id> and @name formats, (6) should_respond with bot-self message, DM, channel with rule, group without mention."
+    },
+    {
+      "title": "Integration tests are structural checks, not behavioral tests — they assert file existence and string presence, not code behavior",
+      "severity": "P1",
+      "file": "tests/test_integration.py",
+      "line": 1,
+      "confidence": 0.90,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "Of the 648 lines in test_integration.py, approximately 400 lines are structural checks: asserting files exist, YAML is valid, and source code contains certain strings. These tests pass regardless of whether the code actually works. Examples: TestSupervisorLifecycle.test_lifecycle_module_exists (line 286) reads lifecycle.py as text and checks for 'def start_profile' string — this passes even if start_profile is a no-op. TestZeusRouting.test_known_domain_routing_table (line 367) checks that routing.py contains profile names as strings — this passes even if the routing logic is broken. TestDashboardREST tests (lines 525-592) query SQLite directly instead of testing HTTP endpoints. Only TestShareKnowledgeRoundTrip (lines 221-276) and TestProfileConfigs (lines 71-107) test actual behavior.",
+      "evidence": [
+        "TestPluginStructure (line 145): 4 tests, all assert file/directory existence or YAML field presence",
+        "TestSupervisorLifecycle (line 283): 6 tests, 5 assert file existence or string-in-file, 1 reads YAML",
+        "TestZeusRouting (line 343): 4 tests, all assert file existence or string-in-file",
+        "TestZeusUnknownQuery (line 387): 1 test, asserts string-in-file",
+        "TestDashboardWebSocket (line 608): 4 tests, all assert string-in-file",
+        "TestDashboardREST (line 409): 6 tests, 5 query SQLite directly (not HTTP), 1 asserts string-in-file"
+      ],
+      "suggested_fix": "Restructure integration tests to actually exercise code behavior: (1) Use aiohttp TestClient for dashboard endpoints, (2) Import and call actual plugin functions (routing._detect_domain, error_handler.is_auth_error, etc.), (3) Keep structural checks as a separate test class or conftest fixture, clearly labeled as 'structure' not 'behavior'."
+    },
+    {
+      "title": "Dashboard deferred endpoints (501 Not Implemented) have no test coverage",
+      "severity": "P2",
+      "file": "plugins/dashboard/api.py",
+      "line": 202,
+      "confidence": 0.90,
+      "autofix_class": "safe_auto",
+      "owner": "downstream-resolver",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "api.py defines 9 deferred endpoints (lines 27-35) that return 501 Not Implemented. handle_not_implemented (line 202-207) returns a JSON error with the path. These are registered in register_routes (line 224-225). No test verifies that these endpoints return 501, that the response body includes the correct path, or that all 9 deferred endpoints are registered. This matters because if a deferred endpoint accidentally returns 200, clients would get empty/confusing responses instead of a clear 'Not Implemented' message.",
+      "evidence": [
+        "DEFERRED_ENDPOINTS set has 9 paths (line 27-35)",
+        "handle_not_implemented uses request.path in response (line 205)",
+        "No test in test_integration.py or elsewhere tests any deferred endpoint"
+      ],
+      "suggested_fix": "Add test that iterates DEFERRED_ENDPOINTS and verifies each returns 501 with correct error message. Can be done with aiohttp TestClient."
+    },
+    {
+      "title": "Revolt identity.py RevoltBotIdentity class untested — config/env precedence and presence payload have no coverage",
+      "severity": "P2",
+      "file": "plugins/revolt/identity.py",
+      "line": 1,
+      "confidence": 0.90,
+      "autofix_class": "safe_auto",
+      "owner": "downstream-resolver",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "identity.py (75 lines) has RevoltBotIdentity with config/env precedence logic (env vars override config.yaml, which override defaults). Untested branches: (1) name resolution — env var > config > default 'Olympus' (line 27-31), (2) avatar_url resolution — env var > config > default '' (line 33-37), (3) status resolution — env var > config > default 'online' (line 39-43), (4) status_text resolution — env var > config > default 'Powered by Olympus' (line 45-49), (5) to_dict — includes avatar only if set (line 54-56), (6) presence_payload — returns status dict (line 59-63), (7) is_configured — checks for custom identity (line 67-72).",
+      "evidence": [
+        "No test file imports plugins.revolt.identity",
+        "RevoltBotIdentity takes config_extra dict — easily testable with different dict inputs",
+        "Env var precedence can be tested with monkeypatch.setenv"
+      ],
+      "suggested_fix": "Add tests: (1) default values with empty config, (2) config values override defaults, (3) env vars override config, (4) to_dict with and without avatar, (5) is_configured with default vs custom identity."
+    },
+    {
+      "title": "Supervisor idle.py state persistence and TTL enforcement untested — file-based state, per-profile TTL, and background thread have no coverage",
+      "severity": "P1",
+      "file": "plugins/supervisor/idle.py",
+      "line": 1,
+      "confidence": 0.90,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "idle.py (166 lines) manages idle TTL enforcement with file-based state persistence. Untested branches: (1) _load_state — reads JSON file, returns {} on parse error (line 30-35), (2) _save_state — atomic write via tmp file (line 39-42), (3) record_activity — writes timestamp with lock (line 47-50), (4) get_idle_time — returns None if never recorded (line 55-60), (5) get_ttl_for_profile — reads idle_ttl from profile config.yaml, falls back to DEFAULT_IDLE_TTL (line 65-76), (6) check_idle — returns exceeded flag (line 84-96), (7) enforce_idle_ttl — iterates on-demand profiles, stops exceeded ones (line 104-131), (8) IdleEnforcer background thread — start/stop/_run (line 143-166).",
+      "evidence": [
+        "No test file imports plugins.supervisor.idle",
+        "idle.py uses _STATE_FILE at module level — tests need to monkeypatch or use a different state file path",
+        "get_ttl_for_profile calls lifecycle._config_file which reads from profiles directory — can be mocked"
+      ],
+      "suggested_fix": "Add tests: (1) record_activity/get_idle_time round-trip with tmp_path for state file, (2) get_idle_time returns None for unknown profile, (3) check_idle with idle time below and above TTL, (4) get_ttl_for_profile with mocked config file containing idle_ttl, (5) enforce_idle_ttl with mocked lifecycle.list_profiles and stop_profile."
+    },
+    {
+      "title": "Dashboard wiki endpoint query parameter filtering (domain/scope) untested",
+      "severity": "P2",
+      "file": "plugins/dashboard/api.py",
+      "line": 100,
+      "confidence": 0.90,
+      "autofix_class": "safe_auto",
+      "owner": "downstream-resolver",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "handle_wiki (lines 93-123) accepts optional domain and scope query parameters and builds a dynamic SQL query. Untested branches: (1) no filters — returns all entries (line 103), (2) domain filter only (line 106-108), (3) scope filter only (line 109-111), (4) both domain and scope filters (line 106-111). The test_integration.py test_wiki_endpoint_data (line 542) queries SQLite directly without any query parameters, so it only tests the 'no filters' path indirectly and doesn't verify the HTTP endpoint behavior at all.",
+      "evidence": [
+        "handle_wiki builds dynamic query with optional WHERE clauses (lines 103-113)",
+        "test_wiki_endpoint_data runs 'SELECT * FROM olympus_knowledge' directly — no domain/scope filtering",
+        "No test exercises request.query.get('domain') or request.query.get('scope')"
+      ],
+      "suggested_fix": "Add test with aiohttp TestClient: (1) GET /api/wiki returns all entries, (2) GET /api/wiki?domain=health returns only health entries, (3) GET /api/wiki?scope=personal returns only personal entries, (4) GET /api/wiki?domain=health&scope=personal returns intersection."
+    },
+    {
+      "title": "Revolt adapter message processing untested — DM vs channel detection, bot-self filtering, and timestamp parsing have no coverage",
+      "severity": "P1",
+      "file": "plugins/revolt/adapter.py",
+      "line": 226,
+      "confidence": 0.90,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "_on_message (lines 226-285) processes incoming Revolt messages with multiple filtering and transformation branches. Untested: (1) empty msg_id returns early (line 229-230), (2) bot-self message filtering (line 233-235), (3) empty text filtering (line 237-239), (4) missing channel_id filtering (line 241-243), (5) DM vs channel type detection (line 246-250), (6) timestamp parsing from snowflake ID with ValueError/OSError fallback (line 266-273), (7) MessageEvent construction and dispatch to handle_message (line 275-285).",
+      "evidence": [
+        "_on_message is a method on RevoltAdapter — requires adapter instance with mocked client",
+        "The method has 6 early-return/filter branches that change behavior",
+        "No test creates a RevoltAdapter instance or calls _on_message"
+      ],
+      "suggested_fix": "Add tests with mocked RevoltAdapter: (1) _on_message with bot-self message (should be filtered), (2) _on_message with empty content (should be filtered), (3) _on_message with DM channel type (should set chat_type='dm'), (4) _on_message with regular channel (should set chat_type='channel'), (5) _on_message with invalid snowflake timestamp (should use current time)."
+    },
+    {
+      "title": "share_knowledge/tools.py _resolve_db_path and _find_schema untested — DB path validation and schema discovery have no coverage",
+      "severity": "P2",
+      "file": "plugins/share_knowledge/tools.py",
+      "line": 37,
+      "confidence": 0.85,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "tools.py has security-critical path validation logic that is untested: (1) _resolve_db_path — validates OLYMPUS_DB_PATH env var is under ~/.hermes, falls back to default if outside (line 37-49), (2) _find_schema — checks 2 candidate paths for schema file (line 60-64), (3) _get_calling_profile — tries to import from hermes_cli, falls back to 'unknown' (line 148-153), (4) _check_scope — denies access when no config exists for profile (line 162-164), allows when scope in allowed list (line 167-168). The inline wrapper in test_share_knowledge.py doesn't test any of these functions.",
+      "evidence": [
+        "_resolve_db_path has a try/except ValueError for path traversal prevention (line 43-47)",
+        "_find_schema iterates 2 candidate paths (line 60-64)",
+        "_check_scope returns error when profile has no config (line 162-164) — this branch is not tested by the wrapper",
+        "No test imports or calls any of these functions"
+      ],
+      "suggested_fix": "Add tests: (1) _resolve_db_path with valid OLYMPUS_DB_PATH under ~/.hermes, (2) _resolve_db_path with path outside ~/.hermes (should fall back), (3) _resolve_db_path without env var (should use default), (4) _find_schema with schema in first candidate location, (5) _find_schema with no schema file (should return None), (6) _check_scope with no config for profile, (7) _check_scope with authorized and unauthorized scopes."
+    }
+  ],
+  "residual_risks": [
+    "The test_share_knowledge.py wrapper class may have diverged from tools.py implementation — any behavioral difference between the wrapper and the real code is completely invisible to tests",
+    "Dashboard auth middleware is registered in the app but never tested — a misconfigured middleware could block all requests or allow unauthenticated access in production",
+    "Revolt adapter's WebSocket reconnection loop (_run_websocket) has complex error handling (auth errors stop reconnecting, rate limits wait, other errors backoff) — if this logic is wrong, the bot could either stop reconnecting on transient errors or infinite-loop on auth failures",
+    "Supervisor lifecycle uses subprocess.Popen to launch hermes CLI — if the CLI interface changes or hermes is not installed, all profile management fails silently. No test verifies the subprocess command format",
+    "Zeus chip_in uses asyncio.run() inside a synchronous function (handle_chip_in) — this will fail if called from an already-running event loop. No test exercises this edge case",
+    "Dashboard seed_data.py writes to ~/.hermes/olympus.db by default — running tests could corrupt production data if the DB path isn't overridden. No test verifies the path override mechanism",
+    "The integration tests that require Hermes (TestProfileBoot, TestPluginLoading) are skipped when Hermes isn't installed — in CI without Hermes, ~15 tests are silently skipped, giving false green",
+    "Revolt adapter depends on gateway.config and gateway.platforms.base modules that are external to this repo — no test verifies the adapter correctly implements the BasePlatformAdapter interface"
+  ],
+  "testing_gaps": [
+    "No unit tests for any plugin code — all tests are either structural checks (file exists, string in file) or direct SQLite queries that bypass the actual application code",
+    "plugins/dashboard/auth.py (149 lines): 0% test coverage — session signing, middleware, login handler all untested",
+    "plugins/dashboard/graphql.py (182 lines): 0% test coverage — query parsing, type resolvers, error handling all untested",
+    "plugins/dashboard/websocket.py (144 lines): 0% test coverage — WebSocketHub, handle_websocket, streaming functions all untested",
+    "plugins/dashboard/api.py (225 lines): 0% behavioral test coverage — REST handlers only tested via direct SQL, not HTTP",
+    "plugins/dashboard/seed_data.py (204 lines): 0% test coverage — seed functions and error rollback untested",
+    "plugins/revolt/adapter.py (410 lines): 0% test coverage — connection lifecycle, message processing, send, disconnect all untested",
+    "plugins/revolt/client.py (257 lines): 0% test coverage — REST API calls, WebSocket event handling, all untested",
+    "plugins/revolt/error_handler.py (94 lines): 0% test coverage — backoff, auth detection, rate limit parsing all untested",
+    "plugins/revolt/routing.py (131 lines): 0% test coverage — message routing, mention detection, should_respond all untested",
+    "plugins/revolt/identity.py (75 lines): 0% test coverage — config/env precedence, presence payload all untested",
+    "plugins/share_knowledge/tools.py (311 lines): 0% test coverage — tests use inline wrapper that duplicates logic instead of testing actual code",
+    "plugins/supervisor/lifecycle.py (189 lines): 0% test coverage — process start/stop, PID management, status checks all untested",
+    "plugins/supervisor/health.py (87 lines): 0% test coverage — health monitor thread, crash detection, auto-restart all untested",
+    "plugins/supervisor/idle.py (166 lines): 0% test coverage — state persistence, TTL enforcement, idle enforcer thread all untested",
+    "plugins/supervisor/api.py (108 lines): 0% test coverage — API wrapper functions untested",
+    "plugins/zeus/skills/routing.py (156 lines): 0% test coverage — domain detection, profile polling, routing logic all untested",
+    "plugins/zeus/skills/chip_in.py (134 lines): 0% test coverage — async polling, JSON parsing, threshold filtering all untested",
+    "Error paths across all plugins: sqlite3.Error handlers, FileNotFoundError handlers, timeout handlers, and auth failure handlers are systematically untested",
+    "Integration between plugins: no test verifies that dashboard auth middleware correctly protects REST endpoints, or that supervisor's auto-start actually starts always-on profiles"
+  ]
+}

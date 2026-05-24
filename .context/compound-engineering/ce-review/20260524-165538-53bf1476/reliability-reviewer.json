@@ -1,0 +1,237 @@
+{
+  "reviewer": "reliability",
+  "findings": [
+    {
+      "title": "aiohttp ClientSession closed immediately after authenticate(), breaking all subsequent API calls",
+      "severity": "P0",
+      "file": "plugins/revolt/client.py",
+      "line": 55,
+      "confidence": 0.95,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "The `async with aiohttp.ClientSession()` context manager closes the session when the block exits (line 76). But `self._session = session` (line 56) stores a reference to that session for reuse. After authenticate() returns, self._session points to a CLOSED session. Every subsequent call — send_message, send_typing, get_user, get_channel, handle_events — will raise `RuntimeError: Session is closed`. The Revolt adapter will authenticate successfully but then be completely unable to send or receive messages. This is a total functional failure masked as a successful connection.",
+      "evidence": [
+        "client.py:55 — `async with aiohttp.ClientSession() as session:` opens context manager",
+        "client.py:56 — `self._session = session` stores reference inside the block",
+        "client.py:76 — context manager exits, session.close() is called implicitly",
+        "client.py:100 — send_message uses `self._session.post(...)` on a closed session",
+        "client.py:216 — handle_events uses `self._session.ws_connect(...)` on a closed session"
+      ],
+      "suggested_fix": "Create the ClientSession outside the context manager and store it. Only use `async with` for the authenticate request, not the session itself: `self._session = aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30))`. Then use `async with self._session.get(...)` for individual requests. Close the session in the `close()` method (already done at line 244)."
+    },
+    {
+      "title": "send_message infinite recursion on persistent 429 rate limits",
+      "severity": "P0",
+      "file": "plugins/revolt/client.py",
+      "line": 110,
+      "confidence": 0.95,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "When the Revolt API returns 429, send_message recursively calls itself after waiting retry_after seconds (line 110). If the server continues to return 429 (e.g., during an extended rate limit window or a misconfigured bot sending too many messages), this recurses infinitely. Each recursive call adds a frame to the Python call stack. Eventually this hits RecursionError (~1000 frames), crashing the message send. Worse, each retry consumes the retry_after delay, so the bot could be stuck for minutes before the stack overflow.",
+      "evidence": [
+        "client.py:105-110 — `if resp.status == 429: ... return await self.send_message(...)` — recursive call with no depth limit",
+        "No max_retries counter or guard on the retry path"
+      ],
+      "suggested_fix": "Add a max_retries parameter with default 1 (current behavior) and decrement on each recursive call. Or convert to a loop: `for attempt in range(2):` with break on success. Alternatively, let the 429 propagate as a failure and let the adapter's reconnect logic handle it."
+    },
+    {
+      "title": "WebSocket reconnect loop spins at 100% CPU when max retries exceeded",
+      "severity": "P0",
+      "file": "plugins/revolt/adapter.py",
+      "line": 213,
+      "confidence": 0.95,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "When RevoltErrorHandler.get_backoff() exceeds MAX_RETRIES (5), it returns -1 (error_handler.py:37). The adapter then calls `await asyncio.sleep(delay)` with delay=-1 (adapter.py:213). In Python 3.11+, asyncio.sleep(-1) returns immediately. In older versions it raises ValueError. Either way, the reconnect loop spins without any delay, hammering the Revolt API with connection attempts. This creates a tight loop that consumes 100% CPU on one core and generates massive log spam. If the Revolt server is down for an extended period, this loop runs forever.",
+      "evidence": [
+        "error_handler.py:32-37 — `if self._retry_count >= MAX_RETRIES: return -1`",
+        "adapter.py:211-213 — `delay = self._error_handler.get_backoff()` followed by `await asyncio.sleep(delay)` with no check for -1",
+        "No guard against negative delay values before the sleep call"
+      ],
+      "suggested_fix": "Check for -1 before sleeping: `if delay < 0: logger.error(...); self._running = False; return`. Or better: after max retries exceeded, set a fatal error and stop the reconnect loop entirely, requiring manual intervention or a higher-level restart."
+    },
+    {
+      "title": "Exponential backoff has no jitter — thundering herd on reconnect",
+      "severity": "P1",
+      "file": "plugins/revolt/error_handler.py",
+      "line": 39,
+      "confidence": 0.90,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The backoff calculation is deterministic: `BASE_BACKOFF_SECONDS * (2 ** self._retry_count)` (line 39). If multiple Hermes instances (or multiple platform adapters) lose connectivity simultaneously, they will all retry at exactly the same timestamps (2s, 4s, 8s, 16s, 32s). This creates a thundering herd that can overwhelm the Revolt API during recovery, potentially causing cascading rate limits. Adding random jitter (±25%) spreads retries across a window and prevents synchronized retry storms.",
+      "evidence": [
+        "error_handler.py:39 — `delay = BASE_BACKOFF_SECONDS * (2 ** self._retry_count)` — fully deterministic",
+        "No random jitter or variance applied to the delay"
+      ],
+      "suggested_fix": "Add jitter: `import random; delay = BASE_BACKOFF_SECONDS * (2 ** self._retry_count) * (0.5 + random.random())`. This adds ±25% variance to each backoff interval."
+    },
+    {
+      "title": "No explicit timeouts on aiohttp HTTP/WebSocket calls",
+      "severity": "P1",
+      "file": "plugins/revolt/client.py",
+      "line": 57,
+      "confidence": 0.85,
+      "autofix_class": "safe_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "All HTTP calls (authenticate, send_message, send_typing, get_user, get_channel, update_bot_name, update_bot_avatar) and the WebSocket connection (handle_events) use aiohttp without explicit timeout configuration. aiohttp's default ClientTimeout is 5 minutes (300s) for the total request. For a real-time messaging bot, waiting 5 minutes for a single HTTP call is unacceptable — it blocks the event loop, prevents reconnection, and makes the bot appear dead. A slow or unresponsive Revolt API will hang the bot for minutes.",
+      "evidence": [
+        "client.py:55 — `aiohttp.ClientSession()` created with no timeout parameter",
+        "client.py:57-60 — `session.get(...)` with no timeout override",
+        "client.py:100-104 — `session.post(...)` with no timeout override",
+        "client.py:216-220 — `session.ws_connect(...)` with heartbeat=30 but no connect/read timeout"
+      ],
+      "suggested_fix": "Create the ClientSession with explicit timeout: `aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=30, connect=10, sock_read=15))`. This ensures no single HTTP call blocks for more than 30 seconds, connection attempts timeout after 10s, and socket reads timeout after 15s."
+    },
+    {
+      "title": "asyncio.run() in chip_in.py will crash if called from an existing event loop",
+      "severity": "P1",
+      "file": "plugins/zeus/skills/chip_in.py",
+      "line": 120,
+      "confidence": 0.90,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": true,
+      "pre_existing": false,
+      "why_it_matters": "handle_chip_in() calls `asyncio.run(_run())` at line 120. asyncio.run() creates a new event loop and will raise `RuntimeError: This event loop is already running` if called from within an existing async context. If this skill is invoked from an async skill handler, an async platform adapter, or any code running inside an event loop, it will crash. This is a common pattern that works in synchronous contexts but fails silently in async ones.",
+      "evidence": [
+        "chip_in.py:120 — `results = asyncio.run(_run())`",
+        "chip_in.py:66 — `_call_profile_async` uses `asyncio.get_event_loop()` which also behaves differently depending on context",
+        "No check for existing event loop before calling asyncio.run()"
+      ],
+      "suggested_fix": "Check for existing event loop: `try: loop = asyncio.get_running_loop(); results = loop.run_until_complete(_run()) except RuntimeError: results = asyncio.run(_run())`. Or better: make handle_chip_in async and use `await _run()` directly, letting the caller manage the event loop."
+    },
+    {
+      "title": "Dashboard server startup task is untracked — failures silently swallowed",
+      "severity": "P1",
+      "file": "plugins/dashboard/__init__.py",
+      "line": 119,
+      "confidence": 0.85,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The dashboard server is started via `loop.create_task(_start_server(_app))` at line 119. The returned Task is not stored or tracked. If _start_server raises an exception (e.g., port already in use, permission denied, invalid host), the task fails silently. asyncio logs unhandled task exceptions but they are easy to miss. The dashboard will appear to be registered but never actually serve traffic. There is no way for the plugin system or operators to detect this failure.",
+      "evidence": [
+        "__init__.py:119 — `loop.create_task(_start_server(_app))` — return value discarded",
+        "No task.add_done_callback() to log failures",
+        "No mechanism to check if the server actually started successfully"
+      ],
+      "suggested_fix": "Store the task and add a done callback: `task = loop.create_task(_start_server(_app)); task.add_done_callback(lambda t: logger.error('Dashboard startup failed') if t.exception() else None)`. Or use `await` if register() can be async."
+    },
+    {
+      "title": "PID file written before process health is confirmed — crash-loop risk",
+      "severity": "P1",
+      "file": "plugins/supervisor/lifecycle.py",
+      "line": 120,
+      "confidence": 0.80,
+      "autofix_class": "manual",
+      "owner": "downstream-resolver",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "start_profile() writes the PID file immediately after Popen (line 120), before confirming the process actually started successfully. If the hermes CLI crashes immediately (e.g., config error, missing dependencies, port conflict), the PID file exists but the process is dead. The health monitor will detect this as 'crashed' and attempt to restart (health.py:76). If the root cause is persistent (e.g., bad config), this creates a restart loop: start → crash → detect → restart → crash. No backoff or restart limit exists in the health monitor's auto-restart path.",
+      "evidence": [
+        "lifecycle.py:107-120 — Popen then immediate _write_pid, no health check",
+        "health.py:36 — _default_restart calls lifecycle.start_profile() with no retry limit",
+        "health.py:62-67 — _run loop checks every 30s with no restart count tracking"
+      ],
+      "suggested_fix": "Add a short delay after start (e.g., 2s) and verify the process is still alive before writing the PID file. Or add a restart counter to the health monitor that backs off after N consecutive restart failures for the same profile."
+    },
+    {
+      "title": "WebSocket broadcast has no timeout on send_str — slow client blocks all broadcasts",
+      "severity": "P1",
+      "file": "plugins/dashboard/websocket.py",
+      "line": 47,
+      "confidence": 0.80,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "The broadcast() method iterates all connected WebSocket clients and calls `await ws.send_str(message)` (line 47) without any timeout. If a client has a slow or stalled network connection, send_str can block indefinitely. Since broadcast holds the _lock during iteration (line 44), all other operations (connect, disconnect, other broadcasts) are blocked until the slow send completes or fails. A single slow client can effectively freeze the entire WebSocket hub.",
+      "evidence": [
+        "websocket.py:44-49 — `async with self._lock:` wraps the entire iteration over connections",
+        "websocket.py:47 — `await ws.send_str(message)` with no timeout or asyncio.wait_for wrapper",
+        "Exception handling at line 48-49 only catches errors after they occur, not hangs"
+      ],
+      "suggested_fix": "Wrap each send in asyncio.wait_for with a timeout: `await asyncio.wait_for(ws.send_str(message), timeout=5.0)`. On timeout, add the client to the disconnected list. Alternatively, release the lock before each send and re-acquire after, so other operations aren't blocked."
+    },
+    {
+      "title": "Module-level file I/O at import time crashes the entire application on failure",
+      "severity": "P1",
+      "file": "plugins/dashboard/auth.py",
+      "line": 43,
+      "confidence": 0.85,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "At module import time, `_SECRET = _generate_secret()` (line 43) executes file I/O: it creates directories and writes a secret file to ~/.hermes/. If the home directory is read-only, the filesystem is full, or permissions are wrong, this raises an exception during import. Since auth.py is imported by dashboard/__init__.py (line 27), the entire dashboard plugin fails to load. This is a single point of failure at import time that cannot be recovered from without code changes.",
+      "evidence": [
+        "auth.py:27-40 — _generate_secret() does os.makedirs and file write",
+        "auth.py:43 — `_SECRET = _generate_secret()` executed at module import",
+        "No try/except around the module-level call"
+      ],
+      "suggested_fix": "Defer secret generation to first use with lazy initialization: `_SECRET = None` at module level, then a `_get_secret()` function that generates on first call. Or wrap the module-level call in try/except and fall back to an in-memory secret with a warning."
+    },
+    {
+      "title": "routing.py calls 8 subprocesses sequentially with all_profiles=True — up to 80s blocking",
+      "severity": "P2",
+      "file": "plugins/zeus/skills/routing.py",
+      "line": 151,
+      "confidence": 0.85,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "When all_profiles=True, handle_routing iterates over 8 specialist profiles and calls _call_profile sequentially (lines 151-153). Each call has a 10-second timeout. In the worst case, this blocks for 80 seconds. chip_in.py does the same polling but in parallel using asyncio.gather (line 118), so routing.py is inconsistent with the rest of the codebase. A 80-second blocking call in a skill handler will timeout any upstream caller and make the routing skill unusable.",
+      "evidence": [
+        "routing.py:151-153 — `for profile in SPECIALIST_PROFILES: response = _call_profile(...)` — sequential loop",
+        "routing.py:108-121 — _call_profile uses subprocess.run with timeout=10",
+        "chip_in.py:114-118 — same polling pattern but uses asyncio.gather for parallelism"
+      ],
+      "suggested_fix": "Convert to parallel execution using concurrent.futures.ThreadPoolExecutor or asyncio, matching the chip_in.py pattern. Or reduce the per-profile timeout when all_profiles=True (e.g., 3s each for a 24s worst case)."
+    },
+    {
+      "title": "Atomic file writes (PID and idle state) lack error handling — state loss on failure",
+      "severity": "P2",
+      "file": "plugins/supervisor/lifecycle.py",
+      "line": 88,
+      "confidence": 0.80,
+      "autofix_class": "gated_auto",
+      "owner": "review-fixer",
+      "requires_verification": false,
+      "pre_existing": false,
+      "why_it_matters": "Both _write_pid (lifecycle.py:87-88) and _save_state (idle.py:41-42) use the atomic write pattern: write to .tmp file, then rename. However, neither has error handling around the tmp.write_text() or tmp.replace() calls. If the write fails (disk full, permissions), the tmp file may be left behind. If the rename fails (cross-filesystem, concurrent access), the original file is unchanged but no error is raised. The caller assumes success. In lifecycle.py, this means a PID file might not be written but start_profile returns ok=True, leaving the profile untracked.",
+      "evidence": [
+        "lifecycle.py:87-88 — `tmp.write_text(...); tmp.replace(pf)` — no try/except",
+        "idle.py:41-42 — `tmp.write_text(...); tmp.replace(_STATE_FILE)` — no try/except",
+        "No cleanup of .tmp files on failure"
+      ],
+      "suggested_fix": "Wrap in try/except and clean up tmp file on failure: `try: tmp.write_text(...); tmp.replace(target) except OSError: tmp.unlink(missing_ok=True); raise`. Log the error so operators can diagnose disk issues."
+    }
+  ],
+  "residual_risks": [
+    "Health monitor auto-restart has no backoff or restart limit — a persistently crashing profile will be restarted every 30 seconds forever, consuming CPU and generating log spam.",
+    "The dashboard has no graceful shutdown hook — when the gateway process exits, the aiohttp server is terminated abruptly, potentially dropping in-flight requests and WebSocket connections.",
+    "SQLite connections are created per-request with no pooling — under sustained load, this could exhaust file descriptors or hit SQLite's locking limits.",
+    "The idle state file is a single JSON file with a module-level lock — if the process crashes during _save_state, the state file could be corrupted (though the .tmp pattern mitigates this partially).",
+    "Revolt adapter's _set_bot_identity silently swallows errors (line 181-182) — if identity setting fails, the bot runs with wrong name/avatar with no operator visibility."
+  ],
+  "testing_gaps": [
+    "No test coverage for the reconnect loop behavior when max retries are exceeded — the asyncio.sleep(-1) bug would only be caught by an integration test that simulates 5+ consecutive failures.",
+    "No test for the aiohttp session lifecycle — a test that calls authenticate() then send_message() would immediately catch the closed-session bug.",
+    "No test for chip_in.py's asyncio.run() behavior when called from an async context — this requires a test that runs handle_chip_in inside an existing event loop.",
+    "No test for dashboard startup failure scenarios (port in use, permission denied) — the untracked task means these failures are invisible without explicit error-path tests.",
+    "No chaos testing for the health monitor — injecting a profile that crashes immediately after start would reveal the crash-loop risk.",
+    "No load test for the WebSocket hub's broadcast under slow-client conditions — the blocking send_str issue requires a test with a deliberately slow WebSocket consumer."
+  ]
+}
