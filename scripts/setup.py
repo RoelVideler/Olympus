@@ -66,12 +66,21 @@ def phase1_database() -> None:
 
     conn = sqlite3.connect(str(DB_PATH))
     try:
+        # executescript() issues an implicit COMMIT, so run schema manually
+        # within a transaction for atomicity with the seeding step.
+        conn.execute("BEGIN")
         conn.executescript(schema_file.read_text())
+        conn.execute("COMMIT")
         log("1/4", f"Schema applied to {DB_PATH}")
 
-        # Seed agent_profiles table
+        # Seed agent_profiles table (same transaction)
+        conn.execute("BEGIN")
         _seed_agent_profiles(conn)
+        conn.execute("COMMIT")
         log("1/4", "agent_profiles seeded")
+    except Exception:
+        conn.rollback()
+        raise
     finally:
         conn.close()
 
@@ -103,15 +112,15 @@ def phase2_profiles() -> None:
     """Create Hermes profiles from config files."""
     log("2/4", "Profile creation")
 
-    # Get existing profiles
+    # Get existing profiles — parse line-by-line to avoid substring matches
     try:
         result = subprocess.run(
             ["hermes", "profile", "list"],
             capture_output=True, text=True, check=True,
         )
-        existing = result.stdout.lower()
+        existing = {line.strip().lower() for line in result.stdout.splitlines() if line.strip()}
     except subprocess.CalledProcessError:
-        existing = ""
+        existing = set()
 
     for name in EXPECTED_PROFILES:
         if name in existing:
