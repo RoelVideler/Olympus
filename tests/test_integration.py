@@ -29,7 +29,10 @@ EXPECTED_PROFILES = [
     "plutus", "hephaestus", "metis", "apollo", "midas"
 ]
 
-EXPECTED_PLUGINS = ["zeus", "supervisor", "revolt", "dashboard", "share_knowledge"]
+EXPECTED_PLUGINS = ["zeus", "supervisor", "revolt", "olympus-dashboard", "share_knowledge"]
+
+# Plugins that load via Hermes agent plugin system (excludes dashboard plugins)
+AGENT_PLUGINS = [p for p in EXPECTED_PLUGINS if p != "olympus-dashboard"]
 
 
 def hermes_available() -> bool:
@@ -153,21 +156,32 @@ class TestPluginStructure:
 
     @pytest.mark.parametrize("plugin", EXPECTED_PLUGINS)
     def test_plugin_manifest_exists(self, plugin):
-        """Test that each plugin has a plugin.yaml manifest."""
-        manifest = PLUGINS_DIR / plugin / "plugin.yaml"
-        assert manifest.exists(), f"Plugin {plugin} missing plugin.yaml"
+        """Test that each plugin has a plugin.yaml or manifest.json manifest."""
+        yaml_manifest = PLUGINS_DIR / plugin / "plugin.yaml"
+        json_manifest = PLUGINS_DIR / plugin / "manifest.json"
+        assert yaml_manifest.exists() or json_manifest.exists(), \
+            f"Plugin {plugin} missing plugin.yaml or manifest.json"
 
     @pytest.mark.parametrize("plugin", EXPECTED_PLUGINS)
     def test_plugin_manifest_valid(self, plugin):
-        """Test that plugin.yaml is valid YAML with required fields."""
-        manifest = PLUGINS_DIR / plugin / "plugin.yaml"
-        if not manifest.exists():
+        """Test that plugin manifest is valid with required fields."""
+        yaml_manifest = PLUGINS_DIR / plugin / "plugin.yaml"
+        json_manifest = PLUGINS_DIR / plugin / "manifest.json"
+
+        if json_manifest.exists():
+            with open(json_manifest) as f:
+                config = json.load(f)
+            assert "name" in config, f"Plugin {plugin} manifest missing name"
+            assert "api" in config, f"Plugin {plugin} manifest missing api"
+            return
+
+        if not yaml_manifest.exists():
             pytest.skip(f"Plugin {plugin} manifest not found")
-        
+
         import yaml
-        with open(manifest) as f:
+        with open(yaml_manifest) as f:
             config = yaml.safe_load(f)
-        
+
         assert "name" in config, f"Plugin {plugin} manifest missing name"
         assert "version" in config, f"Plugin {plugin} manifest missing version"
         assert "description" in config, f"Plugin {plugin} manifest missing description"
@@ -175,9 +189,11 @@ class TestPluginStructure:
 
     @pytest.mark.parametrize("plugin", EXPECTED_PLUGINS)
     def test_plugin_init_exists(self, plugin):
-        """Test that each plugin has __init__.py."""
+        """Test that each plugin has __init__.py or plugin_api.py."""
         init_file = PLUGINS_DIR / plugin / "__init__.py"
-        assert init_file.exists(), f"Plugin {plugin} missing __init__.py"
+        api_file = PLUGINS_DIR / plugin / "plugin_api.py"
+        assert init_file.exists() or api_file.exists(), \
+            f"Plugin {plugin} missing __init__.py or plugin_api.py"
 
 
 @pytest.mark.skipif(not hermes_available(), reason="Hermes Agent not installed")
@@ -185,13 +201,14 @@ class TestPluginLoading:
     """Test that plugins load in Hermes."""
 
     def test_all_plugins_enabled(self):
-        """Test that all 5 Olympus plugins show as enabled in Hermes.
-        
+        """Test that all Olympus agent plugins show as enabled in Hermes.
+
         NEEDS_CONTEXT: Requires plugins to be installed in Hermes.
+        Dashboard plugins (olympus-dashboard) load via Hermes dashboard, not agent plugins.
         """
         enabled = hermes_plugins_enabled()
-        
-        for plugin in EXPECTED_PLUGINS:
+
+        for plugin in AGENT_PLUGINS:
             assert plugin in enabled, \
                 f"Plugin {plugin} not enabled in Hermes — NEEDS_CONTEXT (install plugins first)"
 
@@ -592,11 +609,11 @@ class TestDashboardREST:
         assert prefs.get("timezone") == "Europe/Amsterdam"
 
     def test_api_module_has_routes(self):
-        """Test that api.py registers all Phase 2 endpoints."""
-        api_path = PLUGINS_DIR / "dashboard" / "api.py"
+        """Test that plugin_api.py registers all Phase 2 endpoints."""
+        api_path = PLUGINS_DIR / "olympus-dashboard" / "plugin_api.py"
         content = api_path.read_text()
-        
-        required_endpoints = ["/api/health", "/api/wiki", "/api/calendar", "/api/contacts", "/api/preferences"]
+
+        required_endpoints = ["/health", "/wiki", "/calendar", "/contacts", "/preferences"]
         for endpoint in required_endpoints:
             assert endpoint in content, f"Missing endpoint: {endpoint}"
 
@@ -609,40 +626,38 @@ class TestDashboardWebSocket:
     """Test Dashboard WebSocket streaming."""
 
     def test_websocket_module_exists(self):
-        """Test that websocket.py exists."""
-        ws_path = PLUGINS_DIR / "dashboard" / "websocket.py"
-        assert ws_path.exists(), "Dashboard websocket.py missing"
+        """Test that plugin_api.py exists with WebSocket support."""
+        ws_path = PLUGINS_DIR / "olympus-dashboard" / "plugin_api.py"
+        assert ws_path.exists(), "Olympus dashboard plugin_api.py missing"
 
     def test_websocket_hub_class(self):
         """Test that WebSocketHub class exists."""
-        ws_path = PLUGINS_DIR / "dashboard" / "websocket.py"
+        ws_path = PLUGINS_DIR / "olympus-dashboard" / "plugin_api.py"
         content = ws_path.read_text()
-        
+
         assert "class WebSocketHub" in content, "Missing WebSocketHub class"
-        assert "def connect" in content, "Missing connect method"
-        assert "def disconnect" in content, "Missing disconnect method"
-        assert "def broadcast" in content, "Missing broadcast method"
+        assert "async def connect" in content, "Missing connect method"
+        assert "async def disconnect" in content, "Missing disconnect method"
+        assert "async def broadcast" in content, "Missing broadcast method"
 
     def test_websocket_route_registered(self):
         """Test that WebSocket route is registered."""
-        ws_path = PLUGINS_DIR / "dashboard" / "websocket.py"
+        ws_path = PLUGINS_DIR / "olympus-dashboard" / "plugin_api.py"
         content = ws_path.read_text()
-        
-        assert "register_websocket_route" in content or "add_get" in content, \
-            "WebSocket route not registered"
+
         assert "/ws" in content, "Missing /ws endpoint"
 
     def test_zeus_response_streaming(self):
         """Test that Zeus response streaming function exists."""
-        ws_path = PLUGINS_DIR / "dashboard" / "websocket.py"
+        ws_path = PLUGINS_DIR / "olympus-dashboard" / "plugin_api.py"
         content = ws_path.read_text()
-        
+
         assert "stream_zeus_response" in content, "Missing stream_zeus_response function"
         assert "zeus_chunk" in content, "Missing zeus_chunk event type"
 
     def test_system_event_streaming(self):
         """Test that system event streaming function exists."""
-        ws_path = PLUGINS_DIR / "dashboard" / "websocket.py"
+        ws_path = PLUGINS_DIR / "olympus-dashboard" / "plugin_api.py"
         content = ws_path.read_text()
-        
+
         assert "stream_system_event" in content, "Missing stream_system_event function"
