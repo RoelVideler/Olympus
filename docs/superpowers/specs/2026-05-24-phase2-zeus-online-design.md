@@ -21,10 +21,10 @@ What's missing to run:
 ## Requirements Trace
 
 From architecture doc phased rollout (Phase 2: Zeus Online):
-- Zeus profile online with skills (routing, chip-in coordination)
-- Dashboard works end-to-end through Zeus
-- Supervisor plugin manages profile lifecycle
-- Zeus answers questions directly without delegation
+- [x] Zeus profile online with skills (routing, chip-in coordination) — addressed by system prompt + tool references
+- [x] Supervisor plugin manages profile lifecycle — addressed by idle_ttl + always-on auto-start
+- [x] Zeus answers questions directly without delegation — addressed by system prompt
+- [ ] Dashboard works end-to-end through Zeus — **deferred to Phase 2.5** (requires Hermes dashboard to be running with plugin routes mounted; setup script only installs plugins, does not start dashboard)
 
 ## Architecture
 
@@ -36,19 +36,22 @@ Single idempotent bootstrap script. Four phases, sequential:
 - Read `schema/001_initial.sql`
 - Execute against `~/.hermes/olympus.db`
 - Creates: `olympus_knowledge`, `olympus_knowledge_fts`, `agent_profiles` tables + FTS triggers
-- Safe to re-run (all `CREATE TABLE IF NOT EXISTS`)
+- Seed `agent_profiles` table with all 10 profiles (name, hermes_profile, run_mode, model_provider, model_name, status='stopped')
+- Safe to re-run (all `CREATE TABLE IF NOT EXISTS`, `INSERT OR REPLACE` for seed data)
 
 **Phase 2: Profile Creation**
 - For each profile directory in `profiles/`:
-  - Run `hermes profile create <name> --config profiles/<name>/config.yaml`
-  - Skip if profile already exists (check `hermes profile list`)
+  - Check if profile exists via `hermes profile list`
+  - If not exists, try `hermes profile create <name> --config profiles/<name>/config.yaml`
+  - If `--config` flag not supported, fall back to: copy config to `~/.hermes/<name>/config.yaml` then `hermes profile create <name>`
+  - If profile already exists, skip with info message
 - Profiles created: zeus, chronos, iaso, hermes-agent, philia, plutus, hephaestus, metis, apollo, midas
 
 **Phase 3: Plugin Installation**
 - For each plugin in `plugins/`:
-  - Copy `plugins/<name>/` to `~/.hermes/plugins/<name>/`
-  - Exception: `olympus-dashboard` uses symlink (already exists from Phase 1 dev setup)
-- Plugins installed: zeus, supervisor, revolt, olympus-dashboard, share_knowledge
+  - If `~/.hermes/plugins/<name>/` already exists (e.g., symlink from dev setup), skip
+  - Otherwise, copy `plugins/<name>/` to `~/.hermes/plugins/<name>/`
+- Plugins installed: zeus, supervisor, revolt, olympus-dashboard (symlink preserved), share_knowledge
 
 **Phase 4: Verification**
 - Run `hermes plugins list` — confirm all 5 plugins show as enabled
@@ -81,13 +84,25 @@ system_prompt: |
   Your domain: <specific expertise areas>.
 
   Tools available:
-  - share_knowledge: Read/write cross-agent facts. Scope: <allowed scopes>.
+  - share_knowledge: Read/write cross-agent facts. Write scope: <write_scopes>. Read scope: <read_scopes>.
   - <other toolsets>
 
   When you learn something other agents might need, call share_knowledge(action="write", scope="<scope>", domain="<domain>", fact="...").
 
   Tone: <profile-specific tone>.
 ```
+
+Actual scope values per profile (filled into each prompt):
+- zeus: Write: global, personal, business. Read: global, personal, business.
+- chronos: Write: global, personal. Read: global, personal.
+- iaso: Write: personal. Read: global, personal.
+- hermes-agent: Write: global, personal. Read: global, personal.
+- philia: Write: personal. Read: global, personal.
+- plutus: Write: personal. Read: global, personal.
+- hephaestus: Write: personal. Read: global, personal.
+- metis: Write: global, business. Read: global, business.
+- apollo: Write: business. Read: global, business.
+- midas: Write: business. Read: global, business.
 
 **Zeus system prompt update:**
 The existing Zeus prompt is updated to explicitly reference the `routing` and `chip_in` tools:
@@ -125,6 +140,8 @@ system_prompt: |
 
 **Scope assignments per profile:**
 
+Scope enforcement is handled by `plugins/share_knowledge/__init__.py` via `scopes.json`. The system prompt references the allowed scopes as documentation for the agent. Values below match the existing `_default_scopes()` in the plugin code:
+
 | Profile | Write scopes | Read scopes |
 |---------|-------------|-------------|
 | zeus | global, personal, business | global, personal, business |
@@ -132,14 +149,16 @@ system_prompt: |
 | iaso | personal | global, personal |
 | hermes-agent | global, personal | global, personal |
 | philia | personal | global, personal |
-| plutus | personal, business | global, personal, business |
+| plutus | personal | global, personal |
 | hephaestus | personal | global, personal |
 | metis | global, business | global, business |
-| apollo | personal | global, personal |
-| midas | personal, business | global, personal, business |
+| apollo | business | global, business |
+| midas | business | global, business |
 
 **Sensitive data constraints:**
-- iaso, plutus, midas: system prompts include "Handle health/financial data with care. Do not share sensitive facts outside your domain."
+- iaso: "Handle health data with care. Do not share sensitive health facts outside your domain."
+- plutus: "Handle investment and portfolio data with care. Do not share sensitive financial facts outside your domain."
+- midas: "Handle business finance data with care. Do not share sensitive financial facts outside your domain."
 
 ## Output Structure
 
