@@ -1,7 +1,7 @@
 # Phase 1: Hermes Capability Assessment
 
 ## Date: 2026-05-24
-## Hermes Agent version: 0.11.0 (2026.4.23)
+## Hermes Agent version: 0.14.0 (2026.5.16)
 
 ## Question: Does Hermes Agent's gateway handle multi-profile management natively?
 
@@ -92,3 +92,5 @@ The Olympus Supervisor should be a **simple Python script** (as planned in the a
 - Exposes a simple API that Zeus can call to request profile lifecycle operations
 
 This aligns with the architecture doc's Phase 2 plan: "a simple Python script (not a REST API service)" that manages profile processes without depending on Hermes internals.
+
+**Note on kanban (v0.14.0):** Hermes v0.14.0 now includes `hermes kanban` — a durable task board shared across profiles. Tasks are claimed atomically and executed by a named profile in an isolated workspace. This provides a useful task dispatch mechanism but does NOT replace the Supervisor: kanban manages tasks, not processes. The Supervisor is still needed for on-demand profile start/stop, idle TTL, crash recovery, and health monitoring.

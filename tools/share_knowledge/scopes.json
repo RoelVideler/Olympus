@@ -1,0 +1,42 @@
+{
+  "zeus": {
+    "read": ["personal", "business", "global"],
+    "write": ["personal", "business", "global"]
+  },
+  "chronos": {
+    "read": ["personal", "global"],
+    "write": ["personal", "global"]
+  },
+  "iaso": {
+    "read": ["personal", "global"],
+    "write": ["personal"]
+  },
+  "hermes-agent": {
+    "read": ["personal", "global"],
+    "write": ["personal", "global"]
+  },
+  "philia": {
+    "read": ["personal", "global"],
+    "write": ["personal"]
+  },
+  "plutus": {
+    "read": ["personal", "global"],
+    "write": ["personal"]
+  },
+  "hephaestus": {
+    "read": ["personal", "global"],
+    "write": ["personal"]
+  },
+  "metis": {
+    "read": ["business", "global"],
+    "write": ["business", "global"]
+  },
+  "apollo": {
+    "read": ["business", "global"],
+    "write": ["business"]
+  },
+  "midas": {
+    "read": ["business", "global"],
+    "write": ["business"]
+  }
+}
