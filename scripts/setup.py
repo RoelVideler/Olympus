@@ -214,13 +214,16 @@ def phase4_verification() -> None:
 
     # Check database
     if DB_PATH.exists():
-        conn = sqlite3.connect(str(DB_PATH))
-        count = conn.execute("SELECT COUNT(*) FROM agent_profiles").fetchone()[0]
-        conn.close()
-        if count == 10:
-            log("4/4", f"Database: {count} agent profiles")
-        else:
-            log("4/4", f"WARNING: Database has {count} agent profiles (expected 10)")
+        try:
+            conn = sqlite3.connect(str(DB_PATH))
+            count = conn.execute("SELECT COUNT(*) FROM agent_profiles").fetchone()[0]
+            conn.close()
+            if count == 10:
+                log("4/4", f"Database: {count} agent profiles")
+            else:
+                log("4/4", f"WARNING: Database has {count} agent profiles (expected 10)")
+        except sqlite3.OperationalError:
+            log("4/4", "WARNING: agent_profiles table not found in database")
     else:
         log("4/4", "WARNING: Database not found")
 
