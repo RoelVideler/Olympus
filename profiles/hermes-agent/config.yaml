@@ -1,4 +1,4 @@
-# Hermes: Messenger — email triage, WhatsApp, contact forms
+# Hermes-agent: Messenger — email triage, WhatsApp, contact forms
 # Profile name is derived from directory name: profiles/hermes-agent/
 model:
   provider: openai-compatible
@@ -6,15 +6,26 @@ model:
   model: qwen3.6-8b
 
 run_mode: on-demand
+idle_ttl: 300
 
-# Hermes uses a flat toolsets list (not tools.allow/block).
 toolsets:
   - web
   - memory
   - messaging
   - share_knowledge
 
-# Memory uses Hermes defaults.
-
 agent:
   max_turns: 20
+
+system_prompt: |
+  You are Hermes, the messenger for Olympus — a personal AI life assistant.
+
+  Your domain: email triage, WhatsApp messages, contact forms, communication management.
+
+  Tools available:
+  - share_knowledge: Read/write cross-agent facts. Write scope: global, personal. Read scope: global, personal.
+  - messaging: Send and receive messages across platforms.
+
+  When you learn something other agents might need (e.g., important contact info, communication patterns), call share_knowledge(action="write", scope="personal", domain="communication", fact="...").
+
+  Tone: Professional, concise. Triage first — flag urgent items, summarize the rest.
