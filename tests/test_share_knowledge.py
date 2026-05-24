@@ -1,60 +1,28 @@
+"""Tests for the share_knowledge plugin — tests actual production code.
+
+These tests import and exercise `_handle_share_knowledge` from
+`plugins/share_knowledge/tools.py`, not a duplicated inline wrapper.
+"""
+import json
 import os
 import sqlite3
-import pytest
-from pathlib import Path
-import json
 import uuid
+from pathlib import Path
+from unittest.mock import patch
 
+import pytest
 
-class ShareKnowledgeTool:
-    """Wrapper for testing the share knowledge tool with a custom db path."""
+# Import actual production code
+import sys
+PROJECT_ROOT = Path(__file__).parent.parent
+sys.path.insert(0, str(PROJECT_ROOT))
 
-    def __init__(self, db_path=None, allowed_scopes=None):
-        self.db_path = db_path
-        self.allowed_scopes = allowed_scopes
-
-    def __call__(self, action, scope, domain, fact=None, confidence=1.0, source_profile=None, id=None, limit=10):
-        # Scope enforcement
-        if self.allowed_scopes is not None and scope not in self.allowed_scopes:
-            return {"error": f"Profile not authorized for {action} on scope '{scope}'. Allowed: {self.allowed_scopes}"}
-
-        conn = sqlite3.connect(self.db_path)
-        conn.row_factory = sqlite3.Row
-        try:
-            if action == "write":
-                if not fact:
-                    return {"error": "fact is required for write action"}
-                fact_id = str(uuid.uuid4())
-                profile = source_profile or "test"
-                conn.execute(
-                    "INSERT INTO olympus_knowledge (id, scope, domain, fact, confidence, source_profile) VALUES (?, ?, ?, ?, ?, ?)",
-                    (fact_id, scope, domain, fact, confidence, profile),
-                )
-                conn.commit()
-                return {"status": "written", "id": fact_id}
-            elif action == "query":
-                rows = conn.execute(
-                    "SELECT id, domain, fact, confidence, source_profile, created_at FROM olympus_knowledge WHERE scope = ? AND domain = ? ORDER BY created_at DESC, rowid DESC LIMIT ?",
-                    (scope, domain, limit),
-                ).fetchall()
-                return {
-                    "status": "ok",
-                    "facts": [dict(row) for row in rows],
-                    "count": len(rows),
-                }
-            elif action == "delete":
-                if id is None:
-                    return {"error": "id is required for delete action (delete by fact text is deprecated — use id instead)"}
-                # Check scope ownership of the fact being deleted
-                if self.allowed_scopes is not None:
-                    row = conn.execute("SELECT scope FROM olympus_knowledge WHERE id = ?", (id,)).fetchone()
-                    if row and row["scope"] not in self.allowed_scopes:
-                        return {"error": f"Profile not authorized for delete on scope '{row['scope']}'. Allowed: {self.allowed_scopes}"}
-                cursor = conn.execute("DELETE FROM olympus_knowledge WHERE id = ?", (id,))
-                conn.commit()
-                return {"status": "deleted", "rows_affected": cursor.rowcount}
-        finally:
-            conn.close()
+from plugins.share_knowledge.tools import (
+    _handle_share_knowledge,
+    _get_db,
+    _ensure_schema,
+    SHARE_KNOWLEDGE_SCHEMA,
+)
 
 
 @pytest.fixture
@@ -64,7 +32,7 @@ def db_path(tmp_path):
 
 @pytest.fixture
 def schema_sql():
-    schema_path = os.path.join(os.path.dirname(__file__), "..", "schema", "001_initial.sql")
+    schema_path = PROJECT_ROOT / "schema" / "001_initial.sql"
     with open(schema_path) as f:
         return f.read()
 
@@ -77,87 +45,110 @@ def initialized_db(db_path, schema_sql):
     return db_path
 
 
-def test_write_and_query(initialized_db):
-    tool = ShareKnowledgeTool(db_path=initialized_db, allowed_scopes=None)
+def _call(action, scope, domain, db_path, scope_config=None, **kwargs):
+    """Helper that calls the actual production handler with a custom db path."""
+    args = {"action": action, "scope": scope, "domain": domain, **kwargs}
+    with patch("plugins.share_knowledge.tools.DEFAULT_DB_PATH", Path(db_path)):
+        result = _handle_share_knowledge(args, scope_config=scope_config)
+    return json.loads(result)
 
-    write_result = tool(
-        action="write",
-        scope="personal",
-        domain="preference",
+
+# ============================================================
+# Write and query
+# ============================================================
+
+def test_write_and_query(initialized_db):
+    write_result = _call(
+        "write", "personal", "preference",
+        db_path=initialized_db,
         fact="User prefers morning calls",
         confidence=0.9,
     )
     assert write_result["status"] == "written"
     assert "id" in write_result
 
-    query_result = tool(
-        action="query",
-        scope="personal",
-        domain="preference",
+    query_result = _call(
+        "query", "personal", "preference",
+        db_path=initialized_db,
     )
     assert query_result["status"] == "ok"
     assert query_result["count"] == 1
     assert query_result["facts"][0]["fact"] == "User prefers morning calls"
 
 
-def test_scope_restriction(initialized_db):
-    tool = ShareKnowledgeTool(db_path=initialized_db, allowed_scopes=["personal"])
+# ============================================================
+# Scope enforcement
+# ============================================================
 
+def test_scope_restriction_write(initialized_db):
+    scope_config = {
+        "default": {"read": ["personal"], "write": ["personal"]},
+    }
     # Can write to personal
-    result = tool(
-        action="write",
-        scope="personal",
-        domain="health",
+    result = _call(
+        "write", "personal", "health",
+        db_path=initialized_db,
+        scope_config=scope_config,
         fact="User has a doctor appointment",
     )
     assert result["status"] == "written"
 
     # Cannot write to business
-    result = tool(
-        action="write",
-        scope="business",
-        domain="finance",
+    result = _call(
+        "write", "business", "finance",
+        db_path=initialized_db,
+        scope_config=scope_config,
         fact="Test fact",
     )
     assert "error" in result
     assert "not authorized" in result["error"]
 
 
-def test_delete(initialized_db):
-    tool = ShareKnowledgeTool(db_path=initialized_db, allowed_scopes=None)
+def test_scope_restriction_query(initialized_db):
+    scope_config = {
+        "default": {"read": ["personal"], "write": ["personal"]},
+    }
+    # Write a fact first (no scope config)
+    _call("write", "business", "finance", db_path=initialized_db, fact="Revenue target")
 
-    write_result = tool(
-        action="write",
-        scope="global",
-        domain="contact",
+    # Query with restricted scope — should be denied
+    result = _call(
+        "query", "business", "finance",
+        db_path=initialized_db,
+        scope_config=scope_config,
+    )
+    assert "error" in result
+    assert "not authorized" in result["error"]
+
+
+# ============================================================
+# Delete
+# ============================================================
+
+def test_delete(initialized_db):
+    write_result = _call(
+        "write", "global", "contact",
+        db_path=initialized_db,
         fact="John Doe - john@example.com",
     )
     fact_id = write_result["id"]
 
-    delete_result = tool(
-        action="delete",
-        scope="global",
-        domain="contact",
+    delete_result = _call(
+        "delete", "global", "contact",
+        db_path=initialized_db,
         id=fact_id,
     )
     assert delete_result["status"] == "deleted"
     assert delete_result["rows_affected"] == 1
 
-    query_result = tool(
-        action="query",
-        scope="global",
-        domain="contact",
-    )
+    query_result = _call("query", "global", "contact", db_path=initialized_db)
     assert query_result["count"] == 0
 
 
 def test_delete_by_fact_deprecated(initialized_db):
-    tool = ShareKnowledgeTool(db_path=initialized_db, allowed_scopes=None)
-
-    result = tool(
-        action="delete",
-        scope="global",
-        domain="contact",
+    result = _call(
+        "delete", "global", "contact",
+        db_path=initialized_db,
         fact="some fact",
     )
     assert "error" in result
@@ -165,83 +156,155 @@ def test_delete_by_fact_deprecated(initialized_db):
 
 
 def test_delete_scope_restriction(initialized_db):
-    tool_all = ShareKnowledgeTool(db_path=initialized_db, allowed_scopes=None)
-    tool_personal = ShareKnowledgeTool(db_path=initialized_db, allowed_scopes=["personal"])
-
-    write_result = tool_all(
-        action="write",
-        scope="business",
-        domain="finance",
+    scope_config = {
+        "default": {"read": ["personal"], "write": ["personal"]},
+    }
+    # Write a business fact (no scope config)
+    write_result = _call(
+        "write", "business", "finance",
+        db_path=initialized_db,
         fact="Revenue target: $1M",
     )
     fact_id = write_result["id"]
 
-    result = tool_personal(
-        action="delete",
-        scope="personal",
-        domain="finance",
+    # Try to delete with restricted scope
+    result = _call(
+        "delete", "personal", "finance",
+        db_path=initialized_db,
+        scope_config=scope_config,
         id=fact_id,
     )
     assert "error" in result
     assert "not authorized" in result["error"]
 
-    query_result = tool_all(action="query", scope="business", domain="finance")
+    # Fact still exists
+    query_result = _call("query", "business", "finance", db_path=initialized_db)
     assert query_result["count"] == 1
 
 
-def test_write_requires_fact(initialized_db):
-    tool = ShareKnowledgeTool(db_path=initialized_db, allowed_scopes=None)
+# ============================================================
+# Validation
+# ============================================================
 
-    result = tool(
-        action="write",
-        scope="personal",
-        domain="health",
-        fact=None,
+def test_write_requires_fact(initialized_db):
+    result = _call(
+        "write", "personal", "health",
+        db_path=initialized_db,
     )
+    assert "error" in result
     assert "fact is required" in result["error"]
 
 
+def test_delete_requires_id(initialized_db):
+    result = _call(
+        "delete", "global", "contact",
+        db_path=initialized_db,
+    )
+    assert "error" in result
+    assert "id is required" in result["error"]
+
+
+def test_unknown_action(initialized_db):
+    result = _call(
+        "foobar", "personal", "health",
+        db_path=initialized_db,
+    )
+    assert "error" in result
+    assert "Unknown action" in result["error"]
+
+
+def test_unknown_scope(initialized_db):
+    result = _call(
+        "write", "invalid_scope", "health",
+        db_path=initialized_db,
+        fact="test",
+    )
+    assert "error" in result
+    assert "Unknown scope" in result["error"]
+
+
+def test_domain_too_long(initialized_db):
+    result = _call(
+        "write", "personal", "x" * 101,
+        db_path=initialized_db,
+        fact="test",
+    )
+    assert "error" in result
+    assert "too long" in result["error"]
+
+
+def test_fact_too_long(initialized_db):
+    result = _call(
+        "write", "personal", "health",
+        db_path=initialized_db,
+        fact="x" * 10001,
+    )
+    assert "error" in result
+    assert "too long" in result["error"]
+
+
+# ============================================================
+# Ordering and limits
+# ============================================================
+
 def test_multiple_facts_ordered(initialized_db):
-    tool = ShareKnowledgeTool(db_path=initialized_db, allowed_scopes=None)
+    _call("write", "personal", "health", db_path=initialized_db, fact="Fact 1")
+    _call("write", "personal", "health", db_path=initialized_db, fact="Fact 2")
+    _call("write", "personal", "health", db_path=initialized_db, fact="Fact 3")
 
-    tool(action="write", scope="personal", domain="health", fact="Fact 1")
-    tool(action="write", scope="personal", domain="health", fact="Fact 2")
-    tool(action="write", scope="personal", domain="health", fact="Fact 3")
-
-    result = tool(action="query", scope="personal", domain="health", limit=2)
+    result = _call("query", "personal", "health", db_path=initialized_db, limit=2)
     assert result["count"] == 2
     assert result["facts"][0]["fact"] == "Fact 3"  # Most recent first
     assert result["facts"][1]["fact"] == "Fact 2"
 
 
-def test_cross_profile_round_trip(initialized_db):
-    tool_hermes = ShareKnowledgeTool(db_path=initialized_db, allowed_scopes=None)
-    tool_zeus = ShareKnowledgeTool(db_path=initialized_db, allowed_scopes=None)
+# ============================================================
+# Cross-profile round trip
+# ============================================================
 
-    write_result = tool_hermes(
-        action="write",
-        scope="global",
-        domain="contact",
+def test_cross_profile_round_trip(initialized_db):
+    write_result = _call(
+        "write", "global", "contact",
+        db_path=initialized_db,
         fact="Hermes knows this fact",
-        source_profile="hermes",
     )
     assert write_result["status"] == "written"
     fact_id = write_result["id"]
 
-    query_result = tool_zeus(
-        action="query",
-        scope="global",
-        domain="contact",
-    )
+    query_result = _call("query", "global", "contact", db_path=initialized_db)
     assert query_result["count"] == 1
     assert query_result["facts"][0]["fact"] == "Hermes knows this fact"
-    assert query_result["facts"][0]["source_profile"] == "hermes"
+    assert query_result["facts"][0]["source_profile"] == "default"  # No Hermes context in tests
 
-    delete_result = tool_zeus(
-        action="delete",
-        scope="global",
-        domain="contact",
+    delete_result = _call(
+        "delete", "global", "contact",
+        db_path=initialized_db,
         id=fact_id,
     )
     assert delete_result["status"] == "deleted"
     assert delete_result["rows_affected"] == 1
+
+
+# ============================================================
+# Plugin registration
+# ============================================================
+
+def test_plugin_imports_without_error():
+    """The plugin module should import without ImportError."""
+    from plugins.share_knowledge import register, SHARE_KNOWLEDGE_SCHEMA as SPEC
+    assert register is not None
+    assert SPEC is not None
+
+
+def test_plugin_has_register_function():
+    """The plugin must expose a register(ctx) function."""
+    from plugins.share_knowledge import register
+    assert callable(register)
+
+
+def test_schema_is_valid():
+    """SHARE_KNOWLEDGE_SCHEMA must be a valid tool schema."""
+    assert "type" in SHARE_KNOWLEDGE_SCHEMA or "function" in SHARE_KNOWLEDGE_SCHEMA
+    schema = SHARE_KNOWLEDGE_SCHEMA.get("function", SHARE_KNOWLEDGE_SCHEMA)
+    assert schema["name"] == "share_knowledge"
+    assert "parameters" in schema
