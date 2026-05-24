@@ -4,15 +4,9 @@ Tests validate the setup script's logic without requiring a live Hermes installa
 """
 
 import sqlite3
-import tempfile
 from pathlib import Path
-from unittest.mock import patch, MagicMock
-
-import pytest
-
-# We test the setup module's internal functions directly
-# by importing from scripts.setup
 import sys
+
 sys.path.insert(0, str(Path(__file__).parent.parent / "scripts"))
 
 
