@@ -30,8 +30,23 @@ def _ensure_pid_dir() -> None:
     _PID_DIR.mkdir(parents=True, exist_ok=True)
 
 
+def _validate_profile_name(profile: str) -> str:
+    """Validate and return a safe profile name.
+
+    Rejects names containing path separators, dots, or non-alphanumeric
+    characters to prevent path traversal attacks.
+    """
+    if not profile:
+        raise ValueError("profile name cannot be empty")
+    if "/" in profile or "\\" in profile or ".." in profile:
+        raise ValueError(f"invalid profile name: {profile!r} (path traversal not allowed)")
+    if not profile.replace("-", "").replace("_", "").isalnum():
+        raise ValueError(f"invalid profile name: {profile!r} (must be alphanumeric, hyphens, underscores)")
+    return profile
+
+
 def _pid_file(profile: str) -> Path:
-    return _PID_DIR / f"{profile}.pid"
+    return _PID_DIR / f"{_validate_profile_name(profile)}.pid"
 
 
 def _config_file(profile: str) -> Optional[Path]:

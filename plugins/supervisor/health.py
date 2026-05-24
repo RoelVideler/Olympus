@@ -16,6 +16,8 @@ from . import lifecycle
 logger = logging.getLogger(__name__)
 
 DEFAULT_CHECK_INTERVAL = 30
+MAX_CRASH_RESTARTS = 5
+CRASH_WINDOW_SECONDS = 300  # 5 minutes
 
 
 class HealthMonitor:
@@ -31,13 +33,36 @@ class HealthMonitor:
         self._running = False
         self._thread: Optional[threading.Thread] = None
         self._lock = threading.Lock()
+        # Track crash restarts: {profile: [(timestamp, succeeded), ...]}
+        self._crash_history: Dict[str, list] = {}
+
+    def _record_crash(self, profile: str, succeeded: bool) -> None:
+        """Record a crash restart attempt."""
+        with self._lock:
+            history = self._crash_history.setdefault(profile, [])
+            history.append((time.time(), succeeded))
+            # Prune entries outside the crash window
+            cutoff = time.time() - CRASH_WINDOW_SECONDS
+            self._crash_history[profile] = [
+                (ts, ok) for ts, ok in history if ts > cutoff
+            ]
+
+    def _should_restart(self, profile: str) -> bool:
+        """Check if we should still attempt to restart a crashed profile."""
+        with self._lock:
+            history = self._crash_history.get(profile, [])
+            # Count recent failed restarts
+            recent_failures = sum(1 for _, ok in history if not ok)
+            return recent_failures < MAX_CRASH_RESTARTS
 
     def _default_restart(self, profile: str) -> None:
         result = lifecycle.start_profile(profile)
         if result.get("ok"):
             logger.info("Auto-restarted crashed profile %s (pid %d)", profile, result["pid"])
+            self._record_crash(profile, True)
         else:
             logger.error("Failed to restart crashed profile %s: %s", profile, result.get("error"))
+            self._record_crash(profile, False)
 
     def start(self) -> None:
         """Start the health monitor background thread."""
@@ -72,6 +97,13 @@ class HealthMonitor:
             if info["status"] == "crashed":
                 run_mode = info.get("run_mode", "on-demand")
                 if run_mode == lifecycle.RUN_MODE_ALWAYS_ON:
+                    if not self._should_restart(profile):
+                        logger.error(
+                            "Profile %s crashed %d times in %ds — giving up restarts",
+                            profile, MAX_CRASH_RESTARTS, CRASH_WINDOW_SECONDS,
+                        )
+                        lifecycle._clear_pid(profile)
+                        continue
                     logger.warning("Profile %s crashed — restarting (always-on)", profile)
                     self._on_crash(profile)
                 else:
