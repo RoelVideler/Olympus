@@ -11,7 +11,7 @@ Olympus runs as a set of Hermes plugins that extend the Hermes Agent runtime:
 | **zeus** | Orchestrator profile with routing and chip-in coordination skills |
 | **supervisor** | Profile lifecycle management (start/stop/health-check/idle TTL) |
 | **revolt** | Revolt messaging platform adapter (gateway) |
-| **dashboard** | Web dashboard with REST, GraphQL, and WebSocket endpoints |
+| **olympus-dashboard** | Web dashboard plugin (REST, GraphQL, WebSocket) for Hermes dashboard |
 | **share_knowledge** | Cross-profile knowledge sharing with scope enforcement |
 
 ## Profiles
@@ -64,7 +64,7 @@ Plugins are installed by copying to the Hermes plugins directory:
 
 ```bash
 # Install all plugins
-for plugin in zeus supervisor revolt dashboard share_knowledge; do
+for plugin in zeus supervisor revolt olympus-dashboard share_knowledge; do
   cp -r plugins/$plugin ~/.hermes/plugins/$plugin
 done
 ```
@@ -75,7 +75,7 @@ Or install individually:
 cp -r plugins/zeus ~/.hermes/plugins/zeus
 cp -r plugins/supervisor ~/.hermes/plugins/supervisor
 cp -r plugins/revolt ~/.hermes/plugins/revolt
-cp -r plugins/dashboard ~/.hermes/plugins/dashboard
+cp -r plugins/olympus-dashboard ~/.hermes/plugins/olympus-dashboard
 cp -r plugins/share_knowledge ~/.hermes/plugins/share_knowledge
 ```
 
@@ -97,7 +97,7 @@ hermes profile create midas --config profiles/midas/config.yaml
 ### 7. Seed test data (optional)
 
 ```bash
-python plugins/dashboard/seed_data.py
+python plugins/olympus-dashboard/seed_data.py
 ```
 
 ### 8. Verify installation
@@ -150,10 +150,10 @@ pytest tests/ -v
 
 | Phase | Status | Description |
 |-------|--------|-------------|
-| **Phase 1** | ✅ Complete | Foundation: plugins, profiles, SQLite, share_knowledge |
-| **Phase 2** | Planned | Dashboard: REST endpoints, GraphQL, WebSocket |
-| **Phase 3** | Planned | Revolt: messaging integration |
-| **Phase 4** | Planned | Supervisor: profile lifecycle management |
-| **Phase 5** | Planned | Knowledge: interactive interviews + document ingestion |
+| **Phase 1** | ✅ Complete | Foundation: plugins, profiles, SQLite, share_knowledge, dashboard migration to Hermes native |
+| **Phase 2** | Next | Zeus Online: Zeus answers questions, dashboard chat end-to-end, supervisor lifecycle |
+| **Phase 3** | Planned | Specialized Profiles: Chronos, Iaso online, Zeus delegation, chip-in, cron jobs |
+| **Phase 4** | Planned | Full Rollout: all profiles, business agents, domain routing |
+| **Phase 5** | Planned | Knowledge Gathering: interactive interviews, document ingestion |
 
 See `docs/2026-05-23-olympus-architecture-design.md` for full architecture specification.
