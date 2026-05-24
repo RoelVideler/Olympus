@@ -326,19 +326,19 @@ This is a clean build, not a migration. TheTemple's code stays in its repo. Olym
 - Chip-in mechanism — hybrid model (see below)
 - Cron jobs on Chronos (morning briefing, calendar sync)
 
-**Chip-in model (polling-based):**
+**Chip-in model (polling-based, streaming):**
 - **Top-down dispatch**: Zeus proactively routes known-domain queries to specialist profiles (e.g., "what's my schedule?" → Chronos)
-- **Polling chip-in**: After receiving a user message, Zeus polls specialist profiles with a lightweight model call to check for domain relevance. Each profile responds with a relevance score and optional insight. Zeus collects responses, filters by threshold, and incorporates relevant chip-ins into the final response.
-  - Polling is sequential or parallel depending on message complexity
-  - Lightweight model calls keep latency low (sub-second per profile)
-  - Profiles that have no relevant insight return quickly with a "no match" response
+- **Polling chip-in**: Zeus responds to the user immediately with its own answer, then polls specialist profiles in parallel with lightweight model calls. Each profile evaluates relevance and returns an insight if applicable. Zeus streams relevant chip-ins to the user as they arrive — no hard timeout, all insights eventually arrive.
+  - Initial response is immediate (no polling delay)
+  - Chip-ins stream in as additions ("also, Chronos says your next meeting is at 3pm")
+  - Polling latency target: under 2 seconds per profile, all chip-ins within 10 seconds
 - **Zeus coordinates** chip-in responses (asks for details, resolves conflicts) and ultimately shares a conclusion or summary
 
 **Success criteria:**
 - 3 different delegations work (e.g., Zeus → Chronos, Zeus → Iaso, Zeus → Hermes)
-- 3 polling chip-ins fire correctly (Zeus polls profile, profile returns relevance score, Zeus incorporates insight)
+- 3 polling chip-ins fire correctly (Zeus responds immediately, polls profile, streams insight as it arrives)
 - At least one cron job executes autonomously and produces correct output
-- Polling latency per profile is under 2 seconds
+- Initial response latency is under 2 seconds (before any chip-ins arrive)
 
 ### Phase 4: Full Rollout
 - Hermes, Philia, Plutus, Hephaestus — all on-demand
@@ -410,6 +410,6 @@ External APIs (Gmail, Withings, Google Calendar, Home Assistant) can be down, ra
 
 - **Zeus plugin skill design**: How much of the chip-in algorithm lives in Zeus' system prompt vs. custom Hermes skills? Must be designed before Phase 2 — it is the core architectural commitment of the multi-agent system.
 - **Agent onboarding**: TheTemple's agents never worked properly partly because they lacked proper onboarding — they didn't know the user or their needs. How does each profile learn about the user? `USER.md` files? Structured onboarding flow? Must be designed before Phase 2.
-- **Polling latency per profile**: How fast can Zeus poll a specialist profile and get a relevance response? Must be under 2 seconds per profile for polling to be viable. Measured in Phase 3.
+- **Polling latency target**: How fast can Zeus poll a specialist profile? Target is under 2 seconds per profile so chip-ins arrive within 10 seconds of the initial response. Measured in Phase 3.
 - **Hermes name collision**: The messenger agent shares its name with the Hermes Agent runtime. This will cause confusion in docs, configs, and conversation. Consider renaming the messenger agent (e.g., "Angelos" — Greek for messenger).
 - **Supervisor plugin API**: Does Hermes' gateway extension API support process lifecycle management? Must be verified in Phase 1 before building the Supervisor plugin.

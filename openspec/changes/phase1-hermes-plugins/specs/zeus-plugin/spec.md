@@ -18,40 +18,24 @@ The Zeus orchestrator SHALL run as a Hermes Agent profile (`hermes -p zeus`) wit
 
 ### Requirement: Zeus coordinates chip-in responses via polling
 
-After receiving a user message, Zeus SHALL poll specialist profiles with lightweight model calls to check for domain relevance. Each profile responds with a relevance score and optional insight. Zeus SHALL collect responses, filter by threshold, and incorporate relevant chip-ins into the final response.
+After receiving a user message, Zeus SHALL respond immediately with its own answer, then poll specialist profiles with lightweight model calls to check for domain relevance. Each profile responds with a relevance score and optional insight. Zeus SHALL stream relevant chip-ins to the user as they arrive, appending them to the initial response.
 
-#### Scenario: Zeus polls for chip-ins
+#### Scenario: Zeus responds immediately, then polls
 - **WHEN** Zeus receives a user message
-- **THEN** Zeus polls specialist profiles with lightweight model calls
+- **THEN** Zeus sends its initial response immediately and begins polling specialist profiles in parallel
 
 #### Scenario: Profile returns relevant insight
 - **WHEN** a specialist profile has relevant domain knowledge
-- **THEN** the profile returns a relevance score and insight, which Zeus incorporates into the response
+- **THEN** Zeus streams the insight to the user as an addition to the initial response
 
 #### Scenario: Profile returns no match
 - **WHEN** a specialist profile has no relevant domain knowledge
-- **THEN** the profile returns a "no match" response quickly
+- **THEN** the profile returns a "no match" response quickly and no insight is streamed
 
 #### Scenario: Multiple profiles chip in with conflicting information
 - **WHEN** two or more profiles return relevant insights with conflicting information
-- **THEN** Zeus resolves the conflict and presents a unified response to the user
+- **THEN** Zeus streams each insight with its source attribution and adds a resolution note
 
-### Requirement: Zeus maintains conversation context
-
-Zeus SHALL maintain conversation context across message exchanges, including user preferences, ongoing tasks, and chip-in history.
-
-#### Scenario: Zeus references prior conversation
-- **WHEN** Zeus responds to a user message
-- **THEN** Zeus includes relevant context from prior messages in the conversation
-
-### Requirement: Zeus polling latency stays under 2 seconds per profile
-
-Zeus SHALL complete each polling call to a specialist profile in under 2 seconds. Total polling time across all profiles SHALL stay under 10 seconds for a 5-profile poll.
-
-#### Scenario: Single profile poll completes quickly
-- **WHEN** Zeus polls a single specialist profile
-- **THEN** the poll completes in under 2 seconds
-
-#### Scenario: Multi-profile poll completes within budget
-- **WHEN** Zeus polls 5 specialist profiles
-- **THEN** the total polling time stays under 10 seconds
+#### Scenario: Polling completes within target
+- **WHEN** all specialist profiles respond within 2 seconds each
+- **THEN** all chip-ins arrive within 10 seconds of the initial response
