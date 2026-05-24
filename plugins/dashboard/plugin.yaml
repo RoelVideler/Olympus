@@ -1,0 +1,6 @@
+name: dashboard
+version: 1.0.0
+description: "Web dashboard platform adapter for Olympus — serves REST, GraphQL, and WebSocket endpoints for viewing agent data from the shared SQLite database."
+author: Olympus
+kind: platform
+platform_name: dashboard

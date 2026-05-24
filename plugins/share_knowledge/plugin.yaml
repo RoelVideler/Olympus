@@ -1,0 +1,7 @@
+name: share_knowledge
+version: 1.0.0
+description: "Cross-agent knowledge sharing for Olympus — write, query, and delete shared facts across agent profiles via SQLite + FTS5."
+author: Olympus
+kind: standalone
+provides_tools:
+  - share_knowledge

@@ -1,0 +1,8 @@
+name: zeus
+version: 1.0.0
+description: "Zeus orchestrator plugin — domain routing and chip-in coordination for Olympus specialist profiles."
+author: Olympus
+kind: standalone
+provides_tools:
+  - routing
+  - chip_in

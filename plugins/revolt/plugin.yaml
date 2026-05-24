@@ -1,0 +1,8 @@
+name: revolt
+version: 1.0.0
+description: "Revolt messaging platform adapter for Hermes — connects to self-hosted or revolt.chat instances for real-time messaging with Zeus profile routing."
+author: Olympus
+kind: platform
+platform_name: revolt
+required_env:
+  - REVOLT_BOT_TOKEN

@@ -1,3 +1,3 @@
-from .tool import ShareKnowledgeTool
+from .tools import _handle_share_knowledge, SPEC
 
-__all__ = ["ShareKnowledgeTool"]
+__all__ = ["_handle_share_knowledge", "SPEC"]

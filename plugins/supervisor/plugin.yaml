@@ -1,0 +1,5 @@
+name: supervisor
+version: 1.0.0
+description: "Profile lifecycle supervisor for Olympus — manages always-on, on-demand, and cron-only profiles with health monitoring, crash recovery, and idle TTL."
+author: "Olympus"
+kind: gateway

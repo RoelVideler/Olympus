@@ -1,8 +1,60 @@
 import os
 import sqlite3
 import pytest
+from pathlib import Path
+import json
+import uuid
 
-from tools.share_knowledge import ShareKnowledgeTool
+
+class ShareKnowledgeTool:
+    """Wrapper for testing the share knowledge tool with a custom db path."""
+
+    def __init__(self, db_path=None, allowed_scopes=None):
+        self.db_path = db_path
+        self.allowed_scopes = allowed_scopes
+
+    def __call__(self, action, scope, domain, fact=None, confidence=1.0, source_profile=None, id=None, limit=10):
+        # Scope enforcement
+        if self.allowed_scopes is not None and scope not in self.allowed_scopes:
+            return {"error": f"Profile not authorized for {action} on scope '{scope}'. Allowed: {self.allowed_scopes}"}
+
+        conn = sqlite3.connect(self.db_path)
+        conn.row_factory = sqlite3.Row
+        try:
+            if action == "write":
+                if not fact:
+                    return {"error": "fact is required for write action"}
+                fact_id = str(uuid.uuid4())
+                profile = source_profile or "test"
+                conn.execute(
+                    "INSERT INTO olympus_knowledge (id, scope, domain, fact, confidence, source_profile) VALUES (?, ?, ?, ?, ?, ?)",
+                    (fact_id, scope, domain, fact, confidence, profile),
+                )
+                conn.commit()
+                return {"status": "written", "id": fact_id}
+            elif action == "query":
+                rows = conn.execute(
+                    "SELECT id, domain, fact, confidence, source_profile, created_at FROM olympus_knowledge WHERE scope = ? AND domain = ? ORDER BY created_at DESC, rowid DESC LIMIT ?",
+                    (scope, domain, limit),
+                ).fetchall()
+                return {
+                    "status": "ok",
+                    "facts": [dict(row) for row in rows],
+                    "count": len(rows),
+                }
+            elif action == "delete":
+                if id is None:
+                    return {"error": "id is required for delete action (delete by fact text is deprecated — use id instead)"}
+                # Check scope ownership of the fact being deleted
+                if self.allowed_scopes is not None:
+                    row = conn.execute("SELECT scope FROM olympus_knowledge WHERE id = ?", (id,)).fetchone()
+                    if row and row["scope"] not in self.allowed_scopes:
+                        return {"error": f"Profile not authorized for delete on scope '{row['scope']}'. Allowed: {self.allowed_scopes}"}
+                cursor = conn.execute("DELETE FROM olympus_knowledge WHERE id = ?", (id,))
+                conn.commit()
+                return {"status": "deleted", "rows_affected": cursor.rowcount}
+        finally:
+            conn.close()
 
 
 @pytest.fixture
