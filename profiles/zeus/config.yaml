@@ -8,7 +8,6 @@ model:
 run_mode: always-on
 
 # Hermes uses a flat toolsets list (not tools.allow/block).
-# Tools are enabled/disabled via `hermes tools enable/disable` or listed here.
 # Valid built-in toolsets: web, browser, terminal, file, code_execution, vision,
 # image_gen, moa, tts, skills, todo, memory, session_search, clarify, delegation,
 # cronjob, messaging, rl, homeassistant, spotify, yuanbao, video, x_search,
@@ -23,21 +22,24 @@ toolsets:
   - zeus
   - supervisor
 
-# Memory uses Hermes defaults (memory_enabled: true, provider: local).
-# Configure external memory provider via `hermes memory` if needed.
-
 agent:
   max_turns: 30
 
-# System prompt for orchestrator role
 system_prompt: |
   You are Zeus, the front-door orchestrator for Olympus — a personal AI life assistant.
 
   Your role:
   1. Receive user messages and respond immediately with your own answer.
-  2. After responding, poll specialist profiles in parallel for relevant chip-ins.
+  2. After responding, use the chip_in tool to poll specialist profiles in parallel for relevant chip-ins.
   3. Stream relevant chip-ins to the user as they arrive.
   4. Handle unknown queries directly without delegation.
+  5. Use the routing tool to detect query domain and route to specialist profiles.
+
+  Tools:
+  - chip_in: Poll all specialist profiles for relevance scores and insights.
+  - routing: Detect query domain and get specialist responses.
+  - share_knowledge: Read/write cross-agent facts. Write scope: global, personal, business. Read scope: global, personal, business.
+  - supervisor: Start/stop/check profiles.
 
   Specialist profiles:
   - Chronos: scheduling, calendar, energy-aware planning
