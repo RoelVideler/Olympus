@@ -55,7 +55,6 @@ from gateway.platforms.base import (
 
 from .client import RevoltClient
 from .error_handler import RevoltErrorHandler, is_auth_error, parse_retry_after
-from .routing import get_router
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +119,16 @@ class RevoltAdapter(BasePlatformAdapter):
             extra.get("bot_avatar")
             or os.getenv("REVOLT_BOT_AVATAR", "")
         )
+
+        # User allowlist: comma-separated user IDs, or empty for all users
+        allow_all = os.getenv("REVOLT_ALLOW_ALL_USERS", "").lower() in ("1", "true", "yes")
+        allowed_users_str = os.getenv("REVOLT_ALLOWED_USERS", "").strip()
+        if allow_all:
+            self._allowed_users: Optional[set] = None  # None = allow all
+        elif allowed_users_str:
+            self._allowed_users = {u.strip() for u in allowed_users_str.split(",") if u.strip()}
+        else:
+            self._allowed_users = None  # No allowlist configured = allow all
 
         self._client: Optional[RevoltClient] = None
         self._ws_task: Optional[asyncio.Task] = None
@@ -186,6 +195,8 @@ class RevoltAdapter(BasePlatformAdapter):
         while self._running:
             try:
                 await self._client.handle_events(self._on_revolt_event)
+                # Successful connection — reset retry counter
+                self._error_handler.reset()
             except asyncio.CancelledError:
                 return
             except Exception as e:
@@ -209,6 +220,10 @@ class RevoltAdapter(BasePlatformAdapter):
                     continue
 
                 delay = self._error_handler.get_backoff()
+                if delay < 0:
+                    logger.error("[%s] Max retries exceeded — stopping reconnect", self.name)
+                    self._running = False
+                    return
                 logger.warning("[%s] WebSocket error: %s — reconnecting in %ds", self.name, e, delay)
                 await asyncio.sleep(delay)
 
@@ -232,6 +247,11 @@ class RevoltAdapter(BasePlatformAdapter):
         # Skip messages from the bot itself
         author_id = payload.get("author", "")
         if self._client and author_id == self._client.bot_user_id:
+            return
+
+        # Enforce user allowlist
+        if self._allowed_users is not None and author_id not in self._allowed_users:
+            logger.debug("[%s] Ignoring message from unauthorized user %s", self.name, author_id)
             return
 
         text = (payload.get("content") or "").strip()

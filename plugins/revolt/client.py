@@ -52,30 +52,38 @@ class RevoltClient:
         }
 
         try:
-            async with aiohttp.ClientSession() as session:
-                self._session = session
-                async with session.get(
-                    f"{self._api_url}/{REVOLT_API_VERSION}/auth/account",
-                    headers=self._headers,
-                ) as resp:
-                    if resp.status == 401:
-                        logger.error("Revolt auth failed: invalid bot token")
-                        return False
-                    if resp.status == 429:
-                        retry_after = _parse_retry_after_header(resp)
-                        logger.warning("Revolt rate limited: retry after %ds", retry_after)
-                        return False
-                    if resp.status >= 400:
-                        logger.error("Revolt auth failed: HTTP %d", resp.status)
-                        return False
+            self._session = aiohttp.ClientSession()
+            async with self._session.get(
+                f"{self._api_url}/{REVOLT_API_VERSION}/auth/account",
+                headers=self._headers,
+            ) as resp:
+                if resp.status == 401:
+                    logger.error("Revolt auth failed: invalid bot token")
+                    await self._session.close()
+                    self._session = None
+                    return False
+                if resp.status == 429:
+                    retry_after = _parse_retry_after_header(resp)
+                    logger.warning("Revolt rate limited: retry after %ds", retry_after)
+                    await self._session.close()
+                    self._session = None
+                    return False
+                if resp.status >= 400:
+                    logger.error("Revolt auth failed: HTTP %d", resp.status)
+                    await self._session.close()
+                    self._session = None
+                    return False
 
-                    data = await resp.json()
-                    self.bot_user_id = data.get("_id", "")
-                    logger.info("Revolt authenticated as user %s", self.bot_user_id)
-                    return True
+                data = await resp.json()
+                self.bot_user_id = data.get("_id", "")
+                logger.info("Revolt authenticated as user %s", self.bot_user_id)
+                return True
 
         except aiohttp.ClientError as e:
             logger.error("Revolt connection failed: %s", e)
+            if self._session:
+                await self._session.close()
+                self._session = None
             return False
 
     async def send_message(
