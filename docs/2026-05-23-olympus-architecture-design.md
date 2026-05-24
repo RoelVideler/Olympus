@@ -303,7 +303,7 @@ This is a clean build, not a migration. TheTemple's code stays in its repo. Olym
 
 **Success criteria:**
 - All 10 profiles boot and respond to a basic prompt via Hermes' native interface without errors
-- All 4 Olympus plugins load correctly in Hermes (`hermes plugins list` shows them as enabled)
+- All 5 Olympus plugins load correctly in Hermes (`hermes plugins list` shows them as enabled): zeus, share_knowledge, supervisor, revolt, dashboard
 - `share_knowledge` tool: write from one profile, read from another, verify round-trip against shared SQLite
 - Supervisor plugin starts/stops profiles based on `run_mode` configuration
 
@@ -326,19 +326,19 @@ This is a clean build, not a migration. TheTemple's code stays in its repo. Olym
 - Chip-in mechanism — hybrid model (see below)
 - Cron jobs on Chronos (morning briefing, calendar sync)
 
-**Chip-in model (hybrid):**
+**Chip-in model (polling-based):**
 - **Top-down dispatch**: Zeus proactively routes known-domain queries to specialist profiles (e.g., "what's my schedule?" → Chronos)
-- **Listen-in chip-in (3-tier)**: All agents listen to the conversation with a cascading model pipeline:
-  1. **Ultralight model** (fast, parallel): Determines if there's a potential context match for this agent's domain
-  2. **Heavy model** (silent confirmation): If ultralight flags a match, a heavier model does a quick confirmation — still silent
-  3. **Response formation**: If the heavy model confirms value, the agent forms a response and chips in to Zeus
-  - This gives an indicator that a response is being considered, then forming. Ultralight models run in parallel across all agents.
+- **Polling chip-in**: After receiving a user message, Zeus polls specialist profiles with a lightweight model call to check for domain relevance. Each profile responds with a relevance score and optional insight. Zeus collects responses, filters by threshold, and incorporates relevant chip-ins into the final response.
+  - Polling is sequential or parallel depending on message complexity
+  - Lightweight model calls keep latency low (sub-second per profile)
+  - Profiles that have no relevant insight return quickly with a "no match" response
 - **Zeus coordinates** chip-in responses (asks for details, resolves conflicts) and ultimately shares a conclusion or summary
 
 **Success criteria:**
 - 3 different delegations work (e.g., Zeus → Chronos, Zeus → Iaso, Zeus → Hermes)
-- 3 chip-ins fire correctly (agent listens, decides to contribute, chips in to Zeus, Zeus coordinates response)
+- 3 polling chip-ins fire correctly (Zeus polls profile, profile returns relevance score, Zeus incorporates insight)
 - At least one cron job executes autonomously and produces correct output
+- Polling latency per profile is under 2 seconds
 
 ### Phase 4: Full Rollout
 - Hermes, Philia, Plutus, Hephaestus — all on-demand
@@ -398,7 +398,7 @@ Each profile gets Hermes' built-in toolset (web search, file operations, termina
 Olympus delegates heavily to Hermes Agent's runtime, tool system, memory, and deployment model. If Hermes breaks or changes its API, Olympus is impacted. Mitigation: maintain modularity at integration boundaries (gateway → Zeus via ACP/MCP, domain tools expose clean interfaces). Documented in the escape hatch design constraint.
 
 ### Supervisor Necessity
-Hermes' own gateway process management may handle profile lifecycle. **Phase 1 decision point**: After Hermes installation, evaluate if Hermes' gateway handles multi-profile management, health monitoring, and pre-warm scheduling. If yes, the Supervisor is dropped. If no, implement as a simple Python script (not a REST API service). Move Supervisor build to Phase 2, after Phase 1's capability assessment.
+Hermes' gateway extension API may not support process lifecycle management. **Phase 1 verification**: Test if Hermes' gateway extension API can start/stop profiles, monitor health, and manage idle TTL. If yes, build Supervisor as a gateway extension plugin. If no, build Supervisor as a separate plugin that communicates with the gateway via Hermes' internal API.
 
 ### Cron Coordination
 Cron jobs span multiple profiles (Zeus, Hermes, Iaso, Plutus, Midas), each with independent `jobs.json`. The morning briefing (Zeus, 07:00) may need data from Iaso's health sync and Hermes' email triage. **Design**: Chronos acts as the cron coordinator — it maintains a shared job schedule and triggers dependent profile jobs in the correct order. Independent jobs (portfolio check, invoice reminders) run without coordination.
@@ -410,6 +410,6 @@ External APIs (Gmail, Withings, Google Calendar, Home Assistant) can be down, ra
 
 - **Zeus plugin skill design**: How much of the chip-in algorithm lives in Zeus' system prompt vs. custom Hermes skills? Must be designed before Phase 2 — it is the core architectural commitment of the multi-agent system.
 - **Agent onboarding**: TheTemple's agents never worked properly partly because they lacked proper onboarding — they didn't know the user or their needs. How does each profile learn about the user? `USER.md` files? Structured onboarding flow? Must be designed before Phase 2.
-- **Listen-in model selection**: The 3-tier chip-in pipeline uses ultralight → heavy → response. Which specific models run at each tier? What's the compute cost of running N ultralight models in parallel? Must be benchmarked in Phase 3.
+- **Polling latency per profile**: How fast can Zeus poll a specialist profile and get a relevance response? Must be under 2 seconds per profile for polling to be viable. Measured in Phase 3.
 - **Hermes name collision**: The messenger agent shares its name with the Hermes Agent runtime. This will cause confusion in docs, configs, and conversation. Consider renaming the messenger agent (e.g., "Angelos" — Greek for messenger).
 - **Supervisor plugin API**: Does Hermes' gateway extension API support process lifecycle management? Must be verified in Phase 1 before building the Supervisor plugin.
