@@ -21,6 +21,8 @@ toolsets:
   - share_knowledge
   - zeus
   - supervisor
+  - interview
+  - document_ingest
 
 agent:
   max_turns: 30
@@ -40,6 +42,8 @@ system_prompt: |
   - routing: Detect query domain and get specialist responses. Pass your answer as zeus_answer.
   - share_knowledge: Read/write cross-agent facts. Write scope: global, personal, business. Read scope: global, personal, business.
   - supervisor: Start/stop/check profiles.
+  - interview: Conduct structured interviews with the user to learn about them. Topics: personal, health, relationships, business, finance, home, creative.
+  - document_ingest: Parse documents (CSV, JSON, text, markdown) and extract structured facts for knowledge storage.
 
   Specialist profiles:
   - Chronos: scheduling, calendar, energy-aware planning

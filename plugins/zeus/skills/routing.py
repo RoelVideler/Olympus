@@ -30,49 +30,85 @@ ROUTING_SCHEMA = {
 }
 
 KEYWORD_TO_DOMAIN = {
+    # Hermes (communication)
+    "inbox": "communication",
+    "email": "communication",
+    "mail": "communication",
+    "message": "communication",
+    "contact": "communication",
+    "whatsapp": "communication",
+    "triage": "communication",
+    "communication": "communication",
+    # Chronos (scheduling)
     "scheduling": "scheduling",
     "schedule": "scheduling",
     "calendar": "scheduling",
     "planning": "scheduling",
     "time": "scheduling",
     "test": "scheduling",
+    "meeting": "scheduling",
+    # Iaso (health)
     "health": "health",
     "fitness": "health",
     "nutrition": "health",
     "exercise": "health",
     "sleep": "health",
+    "doctor": "health",
+    "medical": "health",
+    # Philia (relationships)
     "relationships": "relationships",
     "social": "relationships",
     "friend": "relationships",
     "family": "relationships",
     "dating": "relationships",
+    "relationship": "relationships",
+    # Plutus (investments)
     "investments": "investments",
     "stocks": "investments",
     "money": "investments",
     "portfolio": "investments",
     "crypto": "investments",
+    "investment": "investments",
+    "stock": "investments",
+    "trading": "investments",
+    # Hephaestus (home)
     "home": "home",
     "maintenance": "home",
     "repair": "home",
     "appliance": "home",
+    "washing": "home",
+    "property": "home",
+    "house": "home",
+    "automation": "home",
+    # Metis (business)
     "business": "business",
     "strategy": "business",
     "startup": "business",
     "marketing": "business",
+    "company": "business",
+    "revenue": "business",
+    # Apollo (creative)
     "creative": "creative",
     "writing": "creative",
     "art": "creative",
     "music": "creative",
     "design": "creative",
+    "photography": "creative",
+    "song": "creative",
+    "logo": "creative",
+    # Midas (finance)
     "finance": "finance",
     "budget": "finance",
     "budgeting": "finance",
     "expenses": "finance",
     "saving": "finance",
     "spending": "finance",
+    "expense": "finance",
+    "tax": "finance",
 }
 
 DOMAIN_MAP = {
+    "communication": "hermes-agent",
     "scheduling": "chronos",
     "health": "iaso",
     "relationships": "philia",
@@ -84,6 +120,7 @@ DOMAIN_MAP = {
 }
 
 SPECIALIST_PROFILES = [
+    "hermes-agent",
     "chronos",
     "iaso",
     "philia",
@@ -96,9 +133,9 @@ SPECIALIST_PROFILES = [
 
 ROUTING_PROMPT = (
     "You are a domain classifier. Given this user query, determine which single domain "
-    "it belongs to from: scheduling, health, relationships, investments, home, business, "
-    "creative, finance. Respond with ONLY the domain name in lowercase, or 'unknown' if "
-    "none match.\n\nQuery: {query}"
+    "it belongs to from: communication, scheduling, health, relationships, investments, "
+    "home, business, creative, finance. Respond with ONLY the domain name in lowercase, "
+    "or 'unknown' if none match.\n\nQuery: {query}"
 )
 
 SPECIALIST_PROMPT = (
