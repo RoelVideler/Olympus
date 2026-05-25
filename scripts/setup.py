@@ -66,17 +66,13 @@ def phase1_database() -> None:
 
     conn = sqlite3.connect(str(DB_PATH))
     try:
-        # executescript() issues an implicit COMMIT, so run schema manually
-        # within a transaction for atomicity with the seeding step.
-        conn.execute("BEGIN")
+        # executescript() issues an implicit COMMIT before running.
+        # Schema creation is atomic via executescript's own transaction.
         conn.executescript(schema_file.read_text())
-        conn.execute("COMMIT")
         log("1/4", f"Schema applied to {DB_PATH}")
 
-        # Seed agent_profiles table (same transaction)
-        conn.execute("BEGIN")
+        # Seed agent_profiles table (commits its own transaction)
         _seed_agent_profiles(conn)
-        conn.execute("COMMIT")
         log("1/4", "agent_profiles seeded")
     except Exception:
         conn.rollback()

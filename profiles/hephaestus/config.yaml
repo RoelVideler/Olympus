@@ -2,7 +2,7 @@
 # Profile name is derived from directory name: profiles/hephaestus/
 model:
   provider: openai-compatible
-  base_url: http://localhost:11434/v1
+  base_url: http://localhost:8081/v1
   model: qwen3.6-8b
 
 run_mode: on-demand
