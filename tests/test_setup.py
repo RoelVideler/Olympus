@@ -89,12 +89,13 @@ class TestSetupScriptStructure:
     """Test that setup script has required components."""
 
     def test_expected_plugins_list(self):
-        """EXPECTED_PLUGINS contains all 5 plugins."""
+        """EXPECTED_PLUGINS contains all 6 plugins."""
         from setup import EXPECTED_PLUGINS
-        assert len(EXPECTED_PLUGINS) == 5
+        assert len(EXPECTED_PLUGINS) == 6
         assert "zeus" in EXPECTED_PLUGINS
         assert "share_knowledge" in EXPECTED_PLUGINS
         assert "olympus-dashboard" in EXPECTED_PLUGINS
+        assert "hephaestus" in EXPECTED_PLUGINS
 
     def test_expected_profiles_list(self):
         """EXPECTED_PROFILES contains all 10 profiles."""
