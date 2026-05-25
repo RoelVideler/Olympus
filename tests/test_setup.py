@@ -5,7 +5,7 @@ Tests validate the setup script's logic without requiring a live Hermes installa
 
 import sqlite3
 from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch, MagicMock, mock_open
 import subprocess
 import sys
 
@@ -242,3 +242,109 @@ class TestPhase4Verification:
         with patch("setup.subprocess.run", side_effect=[plugins_result, profiles_result]):
             with patch("setup.Path.exists", return_value=False):
                 phase4_verification()  # Should not raise
+
+
+class TestPhase2bConfigureProfiles:
+    """Test SOUL.md writing and model config setting."""
+
+    def test_sets_model_config_for_profile(self):
+        """_set_profile_model runs hermes config set commands."""
+        from setup import _set_profile_model
+
+        model = {
+            "provider": "openai-compatible",
+            "base_url": "http://localhost:8081/v1",
+            "model": "qwen3.6-8b",
+        }
+
+        success = MagicMock()
+        success.returncode = 0
+
+        with patch("setup.subprocess.run", return_value=success) as mock_run:
+            _set_profile_model("test-profile", model)
+
+        # Should have called hermes config set 3 times
+        assert mock_run.call_count == 3
+        # Provider should be mapped to 'custom'
+        calls = [str(c) for c in mock_run.call_args_list]
+        assert "model.provider" in calls[0]
+        assert "custom" in calls[0]
+
+    def test_maps_openai_compatible_to_custom(self):
+        """openai-compatible provider is mapped to custom."""
+        from setup import _set_profile_model
+
+        model = {
+            "provider": "openai-compatible",
+            "base_url": "http://localhost:8081/v1",
+            "model": "qwen3.6-8b",
+        }
+
+        success = MagicMock()
+        success.returncode = 0
+
+        with patch("setup.subprocess.run", return_value=success) as mock_run:
+            _set_profile_model("test-profile", model)
+
+        # First call should set provider to 'custom'
+        first_call = str(mock_run.call_args_list[0])
+        assert "custom" in first_call
+        assert "openai-compatible" not in first_call
+
+    def test_maps_model_names(self):
+        """Model names are mapped to oMLX-compatible names."""
+        from setup import _set_profile_model
+
+        model = {
+            "provider": "openai-compatible",
+            "base_url": "http://localhost:8081/v1",
+            "model": "qwen3.6-8b",
+        }
+
+        success = MagicMock()
+        success.returncode = 0
+
+        with patch("setup.subprocess.run", return_value=success) as mock_run:
+            _set_profile_model("test-profile", model)
+
+        # Third call should set model to mapped name
+        third_call = str(mock_run.call_args_list[2])
+        assert "Qwen3.5-4B" in third_call
+
+    def test_skips_incomplete_model_config(self):
+        """Incomplete model config is skipped."""
+        from setup import _set_profile_model
+
+        model = {"provider": "custom"}  # Missing base_url and model
+
+        with patch("setup.subprocess.run") as mock_run:
+            _set_profile_model("test-profile", model)
+
+        assert mock_run.call_count == 0
+
+    def test_soul_md_written_from_system_prompt(self):
+        """phase2b_configure_profiles writes SOUL.md from system_prompt."""
+        from setup import phase2b_configure_profiles
+
+        mock_config = {
+            "system_prompt": "You are Test Agent.",
+            "model": {
+                "provider": "openai-compatible",
+                "base_url": "http://localhost:8081/v1",
+                "model": "qwen3.6-8b",
+            },
+        }
+
+        success = MagicMock()
+        success.returncode = 0
+
+        with patch("setup.yaml.safe_load", return_value=mock_config):
+            with patch("setup.Path.exists", return_value=True):
+                with patch("setup.Path.mkdir"):
+                    with patch("setup.subprocess.run", return_value=success):
+                        with patch("builtins.open", mock_open()):
+                            with patch.object(Path, "read_text", return_value="old prompt"):
+                                with patch.object(Path, "write_text") as mock_write:
+                                    phase2b_configure_profiles()
+                                    # SOUL.md should be written for each profile
+                                    assert mock_write.call_count > 0
