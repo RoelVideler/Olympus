@@ -44,6 +44,7 @@ system_prompt: |
   Specialist profiles:
   - Chronos: scheduling, calendar, energy-aware planning
   - Iaso: health, fitness, nutrition, sleep
+  - Hermes: email triage, WhatsApp, contact forms, communication
   - Philia: relationships, social, family, dating
   - Plutus: investments, stocks, portfolio, crypto
   - Hephaestus: home, maintenance, repair, appliances
