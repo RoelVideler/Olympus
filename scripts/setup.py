@@ -16,6 +16,11 @@ import subprocess
 import sys
 from pathlib import Path
 
+try:
+    import yaml
+except ImportError:
+    yaml = None
+
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 HERMES_HOME = Path.home() / ".hermes"
 DB_PATH = HERMES_HOME / "olympus.db"
@@ -106,26 +111,35 @@ def _seed_agent_profiles(conn: sqlite3.Connection) -> None:
 
 def phase2_profiles() -> None:
     """Create Hermes profiles from config files."""
-    log("2/4", "Profile creation")
+    log("2/5", "Profile creation")
 
-    # Get existing profiles — parse line-by-line to avoid substring matches
+    # Get existing profiles — parse first column from table output
     try:
         result = subprocess.run(
             ["hermes", "profile", "list"],
             capture_output=True, text=True, check=True,
         )
-        existing = {line.strip().lower() for line in result.stdout.splitlines() if line.strip()}
+        existing = set()
+        for line in result.stdout.splitlines():
+            line = line.strip()
+            if not line or line.startswith("─") or line.startswith("Profile"):
+                continue
+            # Extract profile name (first whitespace-separated token)
+            # Strip leading ◆ marker if present
+            name = line.split()[0].lstrip("◆").lower()
+            if name and name != "default":
+                existing.add(name)
     except subprocess.CalledProcessError:
         existing = set()
 
     for name in EXPECTED_PROFILES:
         if name in existing:
-            log("2/4", f"Profile '{name}' already exists — skipping")
+            log("2/5", f"Profile '{name}' already exists — skipping")
             continue
 
         config = PROFILES_DIR / name / "config.yaml"
         if not config.exists():
-            log("2/4", f"WARNING: Config not found for '{name}' — skipping")
+            log("2/5", f"WARNING: Config not found for '{name}' — skipping")
             continue
 
         # Try --config flag first
@@ -134,7 +148,7 @@ def phase2_profiles() -> None:
                 ["hermes", "profile", "create", name, "--config", str(config)],
                 capture_output=True, text=True, check=True,
             )
-            log("2/4", f"Profile '{name}' created (via --config)")
+            log("2/5", f"Profile '{name}' created (via --config)")
             continue
         except subprocess.CalledProcessError:
             pass
@@ -148,15 +162,112 @@ def phase2_profiles() -> None:
                 ["hermes", "profile", "create", name],
                 capture_output=True, text=True, check=True,
             )
-            log("2/4", f"Profile '{name}' created (via copy)")
+            log("2/5", f"Profile '{name}' created (via copy)")
         except subprocess.CalledProcessError as e:
-            log("2/4", f"WARNING: Failed to create profile '{name}': {e.stderr.strip()}")
-            log("2/4", f"  Manual fallback: hermes profile create {name} --config {config}")
+            log("2/5", f"WARNING: Failed to create profile '{name}': {e.stderr.strip()}")
+            log("2/5", f"  Manual fallback: hermes profile create {name} --config {config}")
+
+
+def phase2b_configure_profiles() -> None:
+    """Write SOUL.md and set model config for each profile.
+
+    Hermes v0.14.0 does not read system_prompt or model config from config.yaml.
+    System prompts go in SOUL.md. Model config must be set via hermes config set.
+    """
+    log("3/5", "Profile configuration")
+
+    for name in EXPECTED_PROFILES:
+        profile_dir = HERMES_HOME / "profiles" / name
+        config_file = PROFILES_DIR / name / "config.yaml"
+
+        if not profile_dir.exists():
+            log("3/5", f"WARNING: Profile directory not found for '{name}' — skipping")
+            continue
+
+        if not config_file.exists():
+            log("3/5", f"WARNING: Config not found for '{name}' — skipping")
+            continue
+
+        # Read config.yaml
+        if yaml is None:
+            log("3/5", f"WARNING: PyYAML not installed — skipping config for '{name}'")
+            log("3/5", f"  Install with: pip install pyyaml")
+            continue
+
+        with open(config_file) as f:
+            config = yaml.safe_load(f)
+
+        # Write SOUL.md from system_prompt
+        soul_path = profile_dir / "SOUL.md"
+        system_prompt = config.get("system_prompt", "").strip()
+        if system_prompt:
+            if soul_path.exists():
+                existing = soul_path.read_text().strip()
+                if existing == system_prompt:
+                    log("3/5", f"SOUL.md for '{name}' already up-to-date — skipping")
+                else:
+                    soul_path.write_text(system_prompt + "\n")
+                    log("3/5", f"SOUL.md for '{name}' updated")
+            else:
+                soul_path.write_text(system_prompt + "\n")
+                log("3/5", f"SOUL.md for '{name}' created")
+        else:
+            log("3/5", f"WARNING: No system_prompt in config for '{name}'")
+
+        # Set model config via hermes CLI
+        model = config.get("model", {})
+        if model:
+            _set_profile_model(name, model)
+        else:
+            log("3/5", f"WARNING: No model config for '{name}'")
+
+
+def _set_profile_model(name: str, model: dict) -> None:
+    """Set model config for a profile via hermes config set."""
+    provider = model.get("provider", "")
+    base_url = model.get("base_url", "")
+    model_name = model.get("model", "")
+
+    if not all([provider, base_url, model_name]):
+        log("3/5", f"WARNING: Incomplete model config for '{name}' — skipping")
+        return
+
+    # Hermes v0.14.0 uses 'custom' for openai-compatible endpoints
+    if provider == "openai-compatible":
+        provider = "custom"
+
+    # Map model names to oMLX-compatible names
+    model_map = {
+        "qwen3.6-8b": "Qwen3.5-4B",
+        "qwen3.6-35b-a3b": "Qwen3.6-35B-A3B",
+        "qwen3.6-35b-a3b-light": "Qwen3.6-35B-A3B-Light",
+    }
+    model_name = model_map.get(model_name.lower(), model_name)
+
+    commands = [
+        ["hermes", "-p", name, "config", "set", "model.provider", provider],
+        ["hermes", "-p", name, "config", "set", "model.base_url", base_url],
+        ["hermes", "-p", name, "config", "set", "model.model", model_name],
+    ]
+
+    # Only set api_key if it's not the default
+    api_key = model.get("api_key")
+    if api_key is not None:
+        commands.append(["hermes", "-p", name, "config", "set", "model.api_key", api_key])
+
+    for cmd in commands:
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            # Hermes outputs "✓ Set ..." — just log the key being set
+            key = cmd[-2] if len(cmd) > 2 else cmd[-1]
+            log("3/5", f"  {name}: {key} set")
+        except subprocess.CalledProcessError as e:
+            log("3/5", f"WARNING: Failed to set model config for '{name}': {e.stderr.strip()}")
 
 
 def phase3_plugins() -> None:
     """Install plugins to ~/.hermes/plugins/."""
-    log("3/4", "Plugin installation")
+    log("4/5", "Plugin installation")
 
     HERMES_HOME.mkdir(parents=True, exist_ok=True)
     dest_dir = HERMES_HOME / "plugins"
@@ -167,25 +278,25 @@ def phase3_plugins() -> None:
         dest = dest_dir / name
 
         if not src.exists():
-            log("3/4", f"WARNING: Plugin directory not found: {src}")
+            log("4/5", f"WARNING: Plugin directory not found: {src}")
             continue
 
         # Skip if already installed (including symlinks)
         if dest.exists() or dest.is_symlink():
-            log("3/4", f"Plugin '{name}' already installed — skipping")
+            log("4/5", f"Plugin '{name}' already installed — skipping")
             continue
 
         # Copy plugin
         if src.is_dir():
             shutil.copytree(src, dest)
-            log("3/4", f"Plugin '{name}' installed")
+            log("4/5", f"Plugin '{name}' installed")
         else:
-            log("3/4", f"WARNING: {src} is not a directory — skipping")
+            log("4/5", f"WARNING: {src} is not a directory — skipping")
 
 
 def phase4_verification() -> None:
     """Verify installation."""
-    log("4/4", "Verification")
+    log("5/5", "Verification")
 
     # Check plugins
     try:
@@ -196,11 +307,11 @@ def phase4_verification() -> None:
         output = result.stdout.lower()
         for name in EXPECTED_PLUGINS:
             if name in output:
-                log("4/4", f"Plugin '{name}' — enabled")
+                log("5/5", f"Plugin '{name}' — enabled")
             else:
-                log("4/4", f"WARNING: Plugin '{name}' not in enabled list")
+                log("5/5", f"WARNING: Plugin '{name}' not in enabled list")
     except subprocess.CalledProcessError as e:
-        log("4/4", f"WARNING: Could not verify plugins: {e.stderr.strip()}")
+        log("5/5", f"WARNING: Could not verify plugins: {e.stderr.strip()}")
 
     # Check profiles
     try:
@@ -211,11 +322,11 @@ def phase4_verification() -> None:
         output = result.stdout.lower()
         for name in EXPECTED_PROFILES:
             if name in output:
-                log("4/4", f"Profile '{name}' — exists")
+                log("5/5", f"Profile '{name}' — exists")
             else:
-                log("4/4", f"WARNING: Profile '{name}' not found")
+                log("5/5", f"WARNING: Profile '{name}' not found")
     except subprocess.CalledProcessError as e:
-        log("4/4", f"WARNING: Could not verify profiles: {e.stderr.strip()}")
+        log("5/5", f"WARNING: Could not verify profiles: {e.stderr.strip()}")
 
     # Check database
     if DB_PATH.exists():
@@ -224,13 +335,13 @@ def phase4_verification() -> None:
             count = conn.execute("SELECT COUNT(*) FROM agent_profiles").fetchone()[0]
             conn.close()
             if count == 10:
-                log("4/4", f"Database: {count} agent profiles")
+                log("5/5", f"Database: {count} agent profiles")
             else:
-                log("4/4", f"WARNING: Database has {count} agent profiles (expected 10)")
+                log("5/5", f"WARNING: Database has {count} agent profiles (expected 10)")
         except sqlite3.OperationalError:
-            log("4/4", "WARNING: agent_profiles table not found in database")
+            log("5/5", "WARNING: agent_profiles table not found in database")
     else:
-        log("4/4", "WARNING: Database not found")
+        log("5/5", "WARNING: Database not found")
 
 
 def main() -> None:
@@ -242,6 +353,7 @@ def main() -> None:
     check_hermes()
     phase1_database()
     phase2_profiles()
+    phase2b_configure_profiles()
     phase3_plugins()
     phase4_verification()
 
