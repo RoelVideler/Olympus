@@ -292,6 +292,14 @@ This is a clean build, not a migration. TheTemple's code stays in its repo. Olym
 └── docs/               # Architecture and ops docs
 ```
 
+## Runtime Notes
+
+**Hermes v0.14.0 compatibility:**
+- System prompts go in `~/.hermes/profiles/<name>/SOUL.md`, NOT in `config.yaml`
+- Model config must be set via `hermes -p <name> config set model.*` commands
+- `config.yaml` files in the repo document intended config but aren't read for model/prompt settings
+- See `docs/superpowers/specs/2026-05-24-phase2-zeus-online-design.md` for full details
+
 ## Phased Rollout
 
 ### Phase 1: Foundation

@@ -189,6 +189,34 @@ profiles/
 | System prompts too long | Low | Low | Hermes has no documented prompt length limit; keep under 2000 chars |
 | idle_ttl too short/long | Low | Low | Tunable — user can edit config.yaml after setup |
 
+## Runtime Notes (Hermes v0.14.0 Compatibility)
+
+**Important:** Hermes v0.14.0 does NOT read the following fields from `config.yaml` at runtime:
+
+| Field | Where Hermes actually reads it |
+|-------|-------------------------------|
+| `system_prompt` | `~/.hermes/profiles/<name>/SOUL.md` |
+| `model.provider` | Must be set via `hermes -p <name> config set model.provider <value>` |
+| `model.base_url` | Must be set via `hermes -p <name> config set model.base_url <url>` |
+| `model.model` | Must be set via `hermes -p <name> config set model.model <name>` |
+| `model.api_key` | Must be set via `hermes -p <name> config set model.api_key <key>` |
+| `toolsets` | Managed via `hermes -p <name> tools enable/disable` |
+
+**Fields Hermes v0.14.0 DOES read from `config.yaml`:**
+- `agent.max_turns`
+- `run_mode` (Olympus-specific, read by Supervisor plugin)
+- `idle_ttl` (Olympus-specific, read by Supervisor plugin)
+
+**Profile setup requires two steps per profile:**
+1. Write `SOUL.md` with the system prompt content
+2. Run `hermes -p <name> config set model.*` for provider, base_url, model, api_key
+
+The `config.yaml` files in `profiles/<name>/config.yaml` serve as documentation of intended configuration but are NOT consumed by Hermes v0.14.0 for model or system prompt settings. Future Hermes versions may support this.
+
+**Setup script limitation:** `scripts/setup.py` creates profiles via `hermes profile create` but cannot set model config or SOUL.md automatically. Phase 3+ should either:
+- Update the setup script to write SOUL.md and run `hermes config set` commands
+- Or wait for Hermes to support `--config` flag or profile manifest imports
+
 ## Rollback Plan
 
 Profile configs are version-controlled. To rollback:
