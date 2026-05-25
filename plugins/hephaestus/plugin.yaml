@@ -1,0 +1,7 @@
+name: hephaestus
+version: 1.0.0
+description: "Home management plugin — maintenance tracking, device diagnostics, and automation design for Hephaestus profile."
+author: Olympus
+kind: standalone
+provides_tools:
+  - home_maintenance
