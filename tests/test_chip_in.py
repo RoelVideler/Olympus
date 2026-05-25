@@ -1,8 +1,6 @@
 """Tests for plugins/zeus/skills/chip_in.py."""
 
-import json
-from unittest.mock import patch, MagicMock, AsyncMock
-import asyncio
+from unittest.mock import patch, AsyncMock
 import sys
 from pathlib import Path
 

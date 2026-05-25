@@ -8,6 +8,7 @@ Zeus streams relevant chip-ins (score > threshold) to the user.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import json
 import subprocess
 from typing import Any
@@ -134,7 +135,6 @@ def handle_chip_in(args: dict, **kw) -> dict[str, Any]:
         asyncio.get_running_loop()
         # In async context — run the coroutine in a new thread to avoid
         # "event loop already running" error from run_until_complete().
-        import concurrent.futures
         with concurrent.futures.ThreadPoolExecutor() as executor:
             future = executor.submit(asyncio.run, _run())
             results = future.result(timeout=timeout + 5)
