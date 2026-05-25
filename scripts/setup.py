@@ -28,7 +28,7 @@ PLUGINS_DIR = PROJECT_ROOT / "plugins"
 PROFILES_DIR = PROJECT_ROOT / "profiles"
 SCHEMA_DIR = PROJECT_ROOT / "schema"
 
-EXPECTED_PLUGINS = ["zeus", "supervisor", "revolt", "olympus-dashboard", "share_knowledge"]
+EXPECTED_PLUGINS = ["zeus", "supervisor", "revolt", "olympus-dashboard", "share_knowledge", "hephaestus"]
 EXPECTED_PROFILES = [
     "zeus", "chronos", "iaso", "hermes-agent", "philia",
     "plutus", "hephaestus", "metis", "apollo", "midas",
@@ -108,6 +108,14 @@ def phase1_database() -> None:
         # Schema creation is atomic via executescript's own transaction.
         conn.executescript(schema_file.read_text())
         log("1/4", f"Schema applied to {DB_PATH}")
+
+        # Install hephaestus home_maintenance schema
+        hephaestus_schema = PROJECT_ROOT / "plugins" / "hephaestus" / "schema" / "001_home_maintenance.sql"
+        if hephaestus_schema.exists():
+            conn.executescript(hephaestus_schema.read_text())
+            log("1/4", "Hephaestus home_maintenance schema installed")
+        else:
+            log("1/4", "WARNING: Hephaestus schema not found, skipping")
 
         # Seed agent_profiles table (commits its own transaction)
         _seed_agent_profiles(conn)
