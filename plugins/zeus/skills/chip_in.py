@@ -22,6 +22,11 @@ CHIP_IN_SCHEMA = {
                 "type": "string",
                 "description": "The user query to evaluate for chip-in relevance.",
             },
+            "zeus_answer": {
+                "type": "string",
+                "description": "Zeus's initial answer to the query, for specialists to review and refine.",
+                "default": "",
+            },
             "threshold": {
                 "type": "number",
                 "description": "Minimum relevance score (0-1) to include a chip-in. Default 0.5.",
@@ -50,12 +55,16 @@ SPECIALIST_PROFILES = [
 
 CHIP_IN_PROMPT = (
     "You are evaluating whether a user query is relevant to your domain. "
+    "Zeus has already provided this initial answer:\n\n"
+    "Query: {query}\n"
+    "Zeus's answer: {zeus_answer}\n\n"
     "Respond in this exact JSON format:\n"
-    '{{"score": <0.0-1.0>, "insight": "<brief insight or null if not relevant>"}}\n\n'
+    '{{"score": <0.0-1.0>, "insight": "<your review or null>"}}\n\n'
     "Rules:\n"
     "- If the query is NOT relevant to your domain, set score to 0.0 and insight to null.\n"
-    "- If relevant, set score based on how directly it matches your expertise (0.5-1.0).\n"
-    "- Keep insight to 1-2 sentences max.\n"
+    "- If Zeus's answer is correct but you have nothing to add, set score to 0.3 and insight to null.\n"
+    "- If Zeus's answer needs correction or you have valuable domain-specific detail, set score 0.5-1.0 and provide your insight.\n"
+    "- Be thorough but concise — give as much detail as the situation requires.\n"
     "- Respond with ONLY valid JSON, no other text.\n\n"
     "Query: {query}"
 )
@@ -99,16 +108,18 @@ def handle_chip_in(args: dict, **kw) -> dict[str, Any]:
     Polls all specialist profiles in parallel and returns those above the threshold.
 
     Args:
-        args: Dict with 'query', optional 'threshold' (default 0.5), optional 'timeout' (default 15).
+        args: Dict with 'query', optional 'zeus_answer', optional 'threshold' (default 0.5),
+              optional 'timeout' (default 15).
 
     Returns:
         Dict with chip_ins list (sorted by score descending) and metadata.
     """
     query = args.get("query", "")
+    zeus_answer = args.get("zeus_answer", "")
     threshold = args.get("threshold", 0.5)
     timeout = args.get("timeout", 15)
 
-    prompt = CHIP_IN_PROMPT.format(query=query)
+    prompt = CHIP_IN_PROMPT.format(query=query, zeus_answer=zeus_answer)
 
     async def _run() -> list[dict[str, Any]]:
         tasks = [
