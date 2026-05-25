@@ -34,6 +34,39 @@ EXPECTED_PROFILES = [
     "plutus", "hephaestus", "metis", "apollo", "midas",
 ]
 
+CRON_JOBS = [
+    {
+        "name": "morning-briefing",
+        "schedule": "0 7 * * *",
+        "profile": "zeus",
+        "prompt": "Generate the morning briefing for the user. Check calendar, health sync, and email triage. Provide consolidated briefing with schedule, urgent items, health status, and energy suggestions.",
+    },
+    {
+        "name": "email-triage",
+        "schedule": "every 30m",
+        "profile": "hermes-agent",
+        "prompt": "Check for new emails and triage them by priority. Summarize urgent items, flag anything requiring immediate attention, and note any messages from important contacts. Store triage summary in share_knowledge with scope=personal, domain=communication.",
+    },
+    {
+        "name": "health-sync",
+        "schedule": "0 8,20 * * *",
+        "profile": "iaso",
+        "prompt": "Sync health data. Check for any new health metrics, medication schedules, or appointment updates. Store findings in share_knowledge with scope=personal, domain=health. Flag any anomalies or upcoming appointments.",
+    },
+    {
+        "name": "portfolio-check",
+        "schedule": "30 9 * * 1-5",
+        "profile": "plutus",
+        "prompt": "Check investment portfolio status. Review market movements, flag any significant changes, and note any actions needed. Store findings in share_knowledge with scope=personal, domain=investments.",
+    },
+    {
+        "name": "invoice-reminder",
+        "schedule": "0 10 1 * *",
+        "profile": "midas",
+        "prompt": "Check for upcoming invoices, bills, and recurring payments due this month. Send a summary of financial obligations and flag any overdue items. Store findings in share_knowledge with scope=personal, domain=finance.",
+    },
+]
+
 
 def log(phase: str, msg: str) -> None:
     print(f"[{phase}] {msg}")
@@ -294,6 +327,60 @@ def phase3_plugins() -> None:
             log("4/5", f"WARNING: {src} is not a directory — skipping")
 
 
+def phase3b_cron_jobs() -> None:
+    """Create cron jobs for Phase 3b automation."""
+    log("5/6", "Cron job setup")
+
+    # Check gateway is running
+    try:
+        result = subprocess.run(
+            ["hermes", "gateway", "status"],
+            capture_output=True, text=True, check=False,
+        )
+        if "not running" in result.stdout.lower():
+            log("5/6", "WARNING: Gateway not running — installing...")
+            subprocess.run(
+                ["hermes", "gateway", "install"],
+                capture_output=True, text=True, check=True,
+            )
+            log("5/6", "Gateway installed")
+    except FileNotFoundError:
+        log("5/6", "WARNING: Could not check gateway status")
+
+    # Get existing jobs
+    try:
+        result = subprocess.run(
+            ["hermes", "-p", "chronos", "cron", "list"],
+            capture_output=True, text=True, check=True,
+        )
+        existing_names = set()
+        for line in result.stdout.splitlines():
+            for job in CRON_JOBS:
+                if job["name"] in line:
+                    existing_names.add(job["name"])
+    except subprocess.CalledProcessError:
+        existing_names = set()
+
+    for job in CRON_JOBS:
+        if job["name"] in existing_names:
+            log("5/6", f"Cron job '{job['name']}' already exists — skipping")
+            continue
+
+        cmd = [
+            "hermes", "-p", "chronos", "cron", "create",
+            job["schedule"],
+            job["prompt"],
+            "--name", job["name"],
+            "--profile", job["profile"],
+            "--deliver", "origin",
+        ]
+        try:
+            result = subprocess.run(cmd, capture_output=True, text=True, check=True)
+            log("5/6", f"Cron job '{job['name']}' created ({job['schedule']}, profile: {job['profile']})")
+        except subprocess.CalledProcessError as e:
+            log("5/6", f"WARNING: Failed to create cron job '{job['name']}': {e.stderr.strip()}")
+
+
 def phase4_verification() -> None:
     """Verify installation."""
     log("5/5", "Verification")
@@ -355,6 +442,7 @@ def main() -> None:
     phase2_profiles()
     phase2b_configure_profiles()
     phase3_plugins()
+    phase3b_cron_jobs()
     phase4_verification()
 
     print("=" * 50)
