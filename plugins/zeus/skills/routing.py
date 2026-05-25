@@ -30,45 +30,58 @@ ROUTING_SCHEMA = {
     },
 }
 
+KEYWORD_TO_DOMAIN = {
+    "scheduling": "scheduling",
+    "schedule": "scheduling",
+    "calendar": "scheduling",
+    "planning": "scheduling",
+    "time": "scheduling",
+    "test": "scheduling",
+    "health": "health",
+    "fitness": "health",
+    "nutrition": "health",
+    "exercise": "health",
+    "sleep": "health",
+    "relationships": "relationships",
+    "social": "relationships",
+    "friend": "relationships",
+    "family": "relationships",
+    "dating": "relationships",
+    "investments": "investments",
+    "stocks": "investments",
+    "money": "investments",
+    "portfolio": "investments",
+    "crypto": "investments",
+    "home": "home",
+    "maintenance": "home",
+    "repair": "home",
+    "appliance": "home",
+    "business": "business",
+    "strategy": "business",
+    "startup": "business",
+    "marketing": "business",
+    "creative": "creative",
+    "writing": "creative",
+    "art": "creative",
+    "music": "creative",
+    "design": "creative",
+    "finance": "finance",
+    "budget": "finance",
+    "budgeting": "finance",
+    "expenses": "finance",
+    "saving": "finance",
+    "spending": "finance",
+}
+
 DOMAIN_MAP = {
     "scheduling": "chronos",
-    "calendar": "chronos",
-    "planning": "chronos",
-    "time": "chronos",
     "health": "iaso",
-    "fitness": "iaso",
-    "nutrition": "iaso",
-    "exercise": "iaso",
-    "sleep": "iaso",
     "relationships": "philia",
-    "social": "philia",
-    "friend": "philia",
-    "family": "philia",
-    "dating": "philia",
     "investments": "plutus",
-    "stocks": "plutus",
-    "money": "plutus",
-    "portfolio": "plutus",
-    "crypto": "plutus",
     "home": "hephaestus",
-    "maintenance": "hephaestus",
-    "repair": "hephaestus",
-    "appliance": "hephaestus",
     "business": "metis",
-    "strategy": "metis",
-    "startup": "metis",
-    "marketing": "metis",
     "creative": "apollo",
-    "writing": "apollo",
-    "art": "apollo",
-    "music": "apollo",
-    "design": "apollo",
     "finance": "midas",
-    "budget": "midas",
-    "budgeting": "midas",
-    "expenses": "midas",
-    "saving": "midas",
-    "spending": "midas",
 }
 
 SPECIALIST_PROFILES = [
@@ -90,19 +103,44 @@ ROUTING_PROMPT = (
 )
 
 SPECIALIST_PROMPT = (
-    "You are a specialist AI assistant. Given this user query, briefly assess whether "
-    "it falls within your domain expertise. If yes, provide a short insight (2-3 sentences). "
-    "If no, respond with exactly: NO_MATCH\n\nQuery: {query}"
+    "You are a specialist AI assistant. The user asked this query, and Zeus (the generalist) "
+    "provided this initial answer:\n\n"
+    "Query: {query}\n"
+    "Zeus's answer: {zeus_answer}\n\n"
+    "Review Zeus's answer from your domain expertise. If it's correct and complete, confirm "
+    "that it's accurate. If it needs correction, missing important detail, or could benefit "
+    "from your domain-specific knowledge, provide your refined answer. Be thorough but concise — "
+    "give as much detail as the situation requires.\n\n"
+    "If this query is NOT within your domain expertise, say so briefly and move on."
 )
 
 
 def _detect_domain(query: str) -> str:
     """Detect the domain of a query using keyword matching."""
     query_lower = query.lower()
-    for keyword, domain in DOMAIN_MAP.items():
+    for keyword, domain in KEYWORD_TO_DOMAIN.items():
         if keyword in query_lower:
             return domain
     return "unknown"
+
+
+_NO_MATCH_INDICATORS = [
+    "not within my domain",
+    "not my area",
+    "not in my expertise",
+    "don't handle that",
+    "outside my domain",
+    "not something i can",
+    "not my specialty",
+]
+
+
+def _is_no_match(response: str) -> bool:
+    """Check if a specialist response indicates the query is outside their domain."""
+    if not response:
+        return True
+    response_lower = response.lower()
+    return any(indicator in response_lower for indicator in _NO_MATCH_INDICATORS)
 
 
 def _call_profile(profile: str, prompt: str, timeout: int = 10) -> str | None:
@@ -125,12 +163,13 @@ def handle_routing(args: dict, **kw) -> dict[str, Any]:
     """Handle a routing request.
 
     Args:
-        args: Dict with 'query' and optional 'all_profiles' boolean.
+        args: Dict with 'query', optional 'zeus_answer', and optional 'all_profiles' boolean.
 
     Returns:
-        Dict with domain, matched_profile, and optional specialist responses.
+        Dict with domain, matched_profile, and specialist responses.
     """
     query = args.get("query", "")
+    zeus_answer = args.get("zeus_answer", "")
     all_profiles = args.get("all_profiles", False)
 
     domain = _detect_domain(query)
@@ -143,14 +182,16 @@ def handle_routing(args: dict, **kw) -> dict[str, Any]:
     }
 
     if matched_profile and not all_profiles:
-        response = _call_profile(matched_profile, SPECIALIST_PROMPT.format(query=query))
-        if response and response != "NO_MATCH":
+        prompt = SPECIALIST_PROMPT.format(query=query, zeus_answer=zeus_answer)
+        response = _call_profile(matched_profile, prompt)
+        if response and not _is_no_match(response):
             result["specialist_responses"][matched_profile] = response
 
     if all_profiles:
         for profile in SPECIALIST_PROFILES:
-            response = _call_profile(profile, SPECIALIST_PROMPT.format(query=query))
-            if response and response != "NO_MATCH":
+            prompt = SPECIALIST_PROMPT.format(query=query, zeus_answer=zeus_answer)
+            response = _call_profile(profile, prompt)
+            if response and not _is_no_match(response):
                 result["specialist_responses"][profile] = response
 
     return result
