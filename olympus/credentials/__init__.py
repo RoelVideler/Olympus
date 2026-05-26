@@ -1,15 +1,15 @@
 """Credential management module for Olympus plugins.
 
-Provides transparent credential access with Keychain priority,
+Provides transparent credential access with Vaultwarden priority,
 falling back to environment variables and token files.
 
 Usage in plugins:
     from olympus.credentials import get_credential
 
-    # Get a credential (tries Keychain → env → token file)
+    # Get a credential (tries Vaultwarden → env → token file)
     token = get_credential("google", "access_token")
 
-    # Set a credential (stores in Keychain)
+    # Set a credential (stores in Vaultwarden)
     set_credential("google", "access_token", "new_token_value")
 """
 
@@ -17,90 +17,204 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
+import ssl
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
-KEYCHAIN_SERVICE = "Olympus"
+# Configuration
+VAULTWARDEN_URL = os.environ.get("VAULTWARDEN_URL", "https://192.168.1.10:7277")
+VAULTWARDEN_CLIENT_ID = os.environ.get("VAULTWARDEN_CLIENT_ID", "user.16ac75bc-dbbb-492d-a0a3-f2600eb8ccc2")
+VAULTWARDEN_CLIENT_SECRET = os.environ.get("VAULTWARDEN_CLIENT_SECRET", "2PqZnLMUt8PJq9U5ufvesDYGsA2m9n")
+VAULT_FOLDER_ID = "5fc7b2d8-981b-4daa-9748-f1d26e165df6"
+
+# Session token cache
+_session_token = None
 
 
-def _run_security(args: list[str]) -> tuple[int, str, str]:
-    """Run security command and return (returncode, stdout, stderr)."""
-    result = subprocess.run(
-        ["security"] + args,
-        capture_output=True,
-        text=True,
+def _get_ssl_context():
+    """Create SSL context that ignores certificate verification."""
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
+    return ctx
+
+
+def _get_access_token() -> str:
+    """Get Vaultwarden access token, refreshing if needed."""
+    global _session_token
+    if _session_token:
+        return _session_token
+
+    data = urlencode({
+        "grant_type": "client_credentials",
+        "client_id": VAULTWARDEN_CLIENT_ID,
+        "client_secret": VAULTWARDEN_CLIENT_SECRET,
+        "scope": "api",
+        "device_identifier": "olympus-hermes",
+        "device_name": "Olympus Hermes",
+        "device_type": "10",
+    }).encode()
+
+    req = Request(
+        f"{VAULTWARDEN_URL}/identity/connect/token",
+        data=data,
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
     )
-    return result.returncode, result.stdout, result.stderr
+
+    with urlopen(req, context=_get_ssl_context()) as resp:
+        tokens = json.loads(resp.read())
+
+    _session_token = tokens["access_token"]
+    return _session_token
+
+
+def _vault_request(path: str, method: str = "GET", body: dict | None = None) -> dict:
+    """Make an authenticated request to Vaultwarden."""
+    token = _get_access_token()
+    url = f"{VAULTWARDEN_URL}{path}"
+    headers = {
+        "Authorization": f"Bearer {token}",
+        "Content-Type": "application/json",
+    }
+    data = json.dumps(body).encode() if body else None
+
+    req = Request(url, data=data, headers=headers, method=method)
+
+    with urlopen(req, context=_get_ssl_context()) as resp:
+        content = resp.read()
+        if not content:
+            return {}
+        return json.loads(content)
+
+
+def _find_item(service: str, key: str) -> Optional[dict]:
+    """Find a vault item by service and key."""
+    items = _vault_request("/api/ciphers")["data"]
+    for item in items:
+        if item.get("folderId") != VAULT_FOLDER_ID:
+            continue
+        name = item.get("name", "")
+        if name.lower() == service.lower():
+            login = item.get("login", {})
+            if login.get("username") == key:
+                return item
+            for field in item.get("fields", []):
+                if field.get("name") == key:
+                    return item
+    return None
 
 
 def credential_get(service: str, key: str) -> Optional[str]:
-    """Retrieve a credential from macOS Keychain."""
-    account = f"{service}:{key}"
-    rc, stdout, stderr = _run_security([
-        "find-generic-password",
-        "-s", KEYCHAIN_SERVICE,
-        "-a", account,
-        "-w",
-    ])
-    if rc != 0:
+    """Retrieve a credential from Vaultwarden."""
+    try:
+        item = _find_item(service, key)
+        if not item:
+            return None
+
+        login = item.get("login", {})
+        if login.get("username") == key:
+            return login.get("password")
+
+        for field in item.get("fields", []):
+            if field.get("name") == key:
+                return field.get("value")
+
         return None
-    return stdout.strip()
+    except Exception:
+        return None
 
 
 def credential_set(service: str, key: str, value: str) -> bool:
-    """Store a credential in macOS Keychain."""
-    account = f"{service}:{key}"
-    rc, _, stderr = _run_security([
-        "add-generic-password",
-        "-s", KEYCHAIN_SERVICE,
-        "-a", account,
-        "-w", value,
-        "-U",
-    ])
-    return rc == 0
+    """Store a credential in Vaultwarden."""
+    try:
+        item = _find_item(service, key)
+
+        if item:
+            item_id = item["id"]
+            login = item.get("login", {})
+            login["username"] = key
+            login["password"] = value
+
+            fields = item.get("fields", [])
+            field_updated = False
+            for field in fields:
+                if field.get("name") == key:
+                    field["value"] = value
+                    field_updated = True
+                    break
+
+            if not field_updated:
+                fields.append({"name": key, "value": value, "type": 1})
+
+            body = {
+                "id": item_id,
+                "folderId": VAULT_FOLDER_ID,
+                "type": 1,
+                "name": service,
+                "login": login,
+                "fields": fields,
+            }
+
+            _vault_request(f"/api/ciphers/{item_id}", method="PUT", body=body)
+        else:
+            body = {
+                "folderId": VAULT_FOLDER_ID,
+                "type": 1,
+                "name": service,
+                "login": {"username": key, "password": value},
+                "fields": [{"name": key, "value": value, "type": 1}],
+            }
+
+            _vault_request("/api/ciphers", method="POST", body=body)
+
+        return True
+    except Exception:
+        return False
 
 
 def credential_delete(service: str, key: str) -> bool:
-    """Delete a credential from macOS Keychain."""
-    account = f"{service}:{key}"
-    rc, _, stderr = _run_security([
-        "delete-generic-password",
-        "-s", KEYCHAIN_SERVICE,
-        "-a", account,
-    ])
-    return rc == 0
+    """Delete a credential from Vaultwarden."""
+    try:
+        item = _find_item(service, key)
+        if not item:
+            return False
+
+        _vault_request(f"/api/ciphers/{item['id']}", method="DELETE")
+        return True
+    except Exception:
+        return False
 
 
 def credential_list(service: Optional[str] = None) -> list[tuple[str, str]]:
     """List all credentials, optionally filtered by service."""
-    rc, stdout, stderr = _run_security(["dump-keychain", "-d"])
-    if rc != 0:
+    try:
+        items = _vault_request("/api/ciphers")["data"]
+        credentials = []
+        for item in items:
+            if item.get("folderId") != VAULT_FOLDER_ID:
+                continue
+            name = item.get("name", "")
+            if service and name.lower() != service.lower():
+                continue
+
+            login = item.get("login", {})
+            if login.get("username"):
+                credentials.append((name, login["username"]))
+
+            for field in item.get("fields", []):
+                if field.get("name"):
+                    credentials.append((name, field["name"]))
+
+        return credentials
+    except Exception:
         return []
-
-    credentials = []
-    current_service = None
-    current_account = None
-
-    for line in stdout.split("\n"):
-        line = line.strip()
-        if line.startswith('"svce"'):
-            current_service = line.split('"')[-2]
-        elif line.startswith('"acct"'):
-            current_account = line.split('"')[-2]
-        elif line == "}" and current_service == KEYCHAIN_SERVICE and current_account:
-            if ":" in current_account:
-                svc, key = current_account.split(":", 1)
-                if service is None or svc == service:
-                    credentials.append((svc, key))
-            current_account = None
-
-    return credentials
 
 
 def get_credential(service: str, key: str) -> Optional[str]:
-    """Get a credential with fallback chain: Keychain → env → token file."""
-    # 1. Try Keychain
+    """Get a credential with fallback chain: Vaultwarden → env → token file."""
+    # 1. Try Vaultwarden
     value = credential_get(service, key)
     if value:
         return value
@@ -151,12 +265,12 @@ def get_credential(service: str, key: str) -> Optional[str]:
 
 
 def set_credential(service: str, key: str, value: str) -> bool:
-    """Set a credential in Keychain."""
+    """Set a credential in Vaultwarden."""
     return credential_set(service, key, value)
 
 
 def delete_credential(service: str, key: str) -> bool:
-    """Delete a credential from Keychain."""
+    """Delete a credential from Vaultwarden."""
     return credential_delete(service, key)
 
 
