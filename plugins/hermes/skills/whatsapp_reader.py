@@ -158,6 +158,15 @@ def _tool_result(data=None, **kwargs) -> str:
 
 
 def _get_bridge_token() -> str:
+    # Try Keychain first via credential module
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
+    from olympus.credentials import get_credential
+    token = get_credential("whatsapp", "bridge_token")
+    if token:
+        return token
+
+    # Fallback to file
     if not BRIDGE_TOKEN_PATH.exists():
         raise FileNotFoundError(
             f"WhatsApp bridge token not found at {BRIDGE_TOKEN_PATH}. "
