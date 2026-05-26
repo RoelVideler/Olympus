@@ -168,9 +168,9 @@ def _get_bridge_token() -> str:
 
 def _bridge_request(path: str, method: str = "GET", body: dict | None = None) -> dict:
     token = _get_bridge_token()
-    # Default bridge port is 8080, but we use 8081
+    # Default bridge port is 8080, but we use a high ephemeral port
     import os
-    port = os.environ.get("WHATSAPP_BRIDGE_PORT", "8081")
+    port = os.environ.get("WHATSAPP_BRIDGE_PORT", "36569")
     url = f"http://127.0.0.1:{port}{path}"
     headers = {"Authorization": f"Bearer {token}"}
     if body:
