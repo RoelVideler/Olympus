@@ -1,0 +1,9 @@
+name: hermes
+version: 1.0.0
+description: "Communication plugin — Gmail triage, drafting, WhatsApp safety scanning, message reading, and email management for Hermes profile."
+author: Olympus
+kind: standalone
+provides_tools:
+  - gmail_triage
+  - whatsapp_safety
+  - whatsapp_reader

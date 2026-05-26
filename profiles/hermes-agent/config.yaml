@@ -13,6 +13,7 @@ toolsets:
   - memory
   - messaging
   - share_knowledge
+  - hermes
 
 agent:
   max_turns: 20

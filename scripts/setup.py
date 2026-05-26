@@ -28,7 +28,7 @@ PLUGINS_DIR = PROJECT_ROOT / "plugins"
 PROFILES_DIR = PROJECT_ROOT / "profiles"
 SCHEMA_DIR = PROJECT_ROOT / "schema"
 
-EXPECTED_PLUGINS = ["zeus", "supervisor", "revolt", "olympus-dashboard", "share_knowledge", "hephaestus", "iaso"]
+EXPECTED_PLUGINS = ["zeus", "supervisor", "revolt", "olympus-dashboard", "share_knowledge", "hephaestus", "iaso", "hermes"]
 EXPECTED_PROFILES = [
     "zeus", "chronos", "iaso", "hermes-agent", "philia",
     "plutus", "hephaestus", "metis", "apollo", "midas",
@@ -124,6 +124,30 @@ def phase1_database() -> None:
             log("1/4", "Iaso withings_sync schema installed")
         else:
             log("1/4", "WARNING: Iaso schema not found, skipping")
+
+        # Install hermes gmail_triage schema
+        hermes_schema = PROJECT_ROOT / "plugins" / "hermes" / "schema" / "001_gmail_triage.sql"
+        if hermes_schema.exists():
+            conn.executescript(hermes_schema.read_text())
+            log("1/4", "Hermes gmail_triage schema installed")
+        else:
+            log("1/4", "WARNING: Hermes schema not found, skipping")
+
+        # Install hermes whatsapp_safety schema
+        whatsapp_safety_schema = PROJECT_ROOT / "plugins" / "hermes" / "schema" / "002_whatsapp_safety.sql"
+        if whatsapp_safety_schema.exists():
+            conn.executescript(whatsapp_safety_schema.read_text())
+            log("1/4", "Hermes whatsapp_safety schema installed")
+        else:
+            log("1/4", "WARNING: WhatsApp safety schema not found, skipping")
+
+        # Install hermes whatsapp_reader schema
+        whatsapp_reader_schema = PROJECT_ROOT / "plugins" / "hermes" / "schema" / "003_whatsapp_reader.sql"
+        if whatsapp_reader_schema.exists():
+            conn.executescript(whatsapp_reader_schema.read_text())
+            log("1/4", "Hermes whatsapp_reader schema installed")
+        else:
+            log("1/4", "WARNING: WhatsApp reader schema not found, skipping")
 
         # Seed agent_profiles table (commits its own transaction)
         _seed_agent_profiles(conn)

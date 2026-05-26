@@ -13,6 +13,9 @@ Olympus runs as a set of Hermes plugins that extend the Hermes Agent runtime:
 | **revolt** | Revolt messaging platform adapter (gateway) |
 | **olympus-dashboard** | Web dashboard plugin (REST, GraphQL, WebSocket) for Hermes dashboard |
 | **share_knowledge** | Cross-profile knowledge sharing with scope enforcement |
+| **hephaestus** | Home management — maintenance tracking, device diagnostics, HA MCP integration |
+| **iaso** | Health & fitness — Withings OAuth sync, vitals/sleep/activity tracking |
+| **hermes** | Communication — Gmail triage/drafting, WhatsApp reading with prompt injection shield |
 
 ## Profiles
 
@@ -21,7 +24,7 @@ Olympus runs as a set of Hermes plugins that extend the Hermes Agent runtime:
 | Profile | Role | Run Mode | LLM |
 |---------|------|----------|-----|
 | **zeus** | Orchestrator | always-on | Qwen3.6 35B A3B |
-| **chronos** | Scheduling | on-demand | Qwen3.6 8B |
+| **chronos** | Scheduling | always-on | Qwen3.6 8B |
 | **iaso** | Health & fitness | on-demand | Qwen3.6 8B |
 | **hermes-agent** | Messenger | on-demand | Qwen3.6 8B |
 | **philia** | Relationships | on-demand | Qwen3.6 8B |
@@ -151,9 +154,30 @@ pytest tests/ -v
 | Phase | Status | Description |
 |-------|--------|-------------|
 | **Phase 1** | ✅ Complete | Foundation: plugins, profiles, SQLite, share_knowledge, dashboard migration to Hermes native |
-| **Phase 2** | Next | Zeus Online: Zeus answers questions, dashboard chat end-to-end, supervisor lifecycle |
-| **Phase 3** | Planned | Specialized Profiles: Chronos, Iaso online, Zeus delegation, chip-in, cron jobs |
-| **Phase 4** | Planned | Full Rollout: all profiles, business agents, domain routing |
-| **Phase 5** | Planned | Knowledge Gathering: interactive interviews, document ingestion |
+| **Phase 2** | ✅ Complete | Zeus Online: setup script, profile configs with SOUL.md, model config via Hermes CLI |
+| **Phase 3a** | ✅ Complete | Delegation & chip-in: routing with `zeus_answer`, review-and-refine scoring, integration tests |
+| **Phase 3b** | ✅ Complete | Cron jobs: gateway as launchd service, 5 scheduled jobs (briefing, triage, health, portfolio, invoice) |
+| **Phase 3c** | ✅ Complete | Lifecycle management: supervisor health monitor, idle TTL enforcement, crash recovery (59 tests) |
+| **Phase 4** | ✅ Complete | Full rollout: routing keywords for all 10 profiles, communication domain |
+| **Phase 5** | ✅ Complete | Knowledge gathering: structured interviews (7 topics), document ingestion (CSV/JSON/text/markdown) |
+
+**305 tests pass.**
+
+## Remaining Work
+
+### Domain Tool Plugins
+| Tool | Profile | Integration |
+|------|---------|-------------|
+| `home_assistant` | Hephaestus | Home Assistant REST API |
+| `withings_sync` | Iaso | Withings health API |
+| `gmail_triage` | Hermes | Gmail MCP server |
+| `whatsapp_send` | Hermes | WhatsApp API |
+| `calendar_query` | Chronos, Zeus | Google Calendar MCP |
+
+### Hardening
+- Revolt plugin live testing against self-hosted instance
+- Dashboard end-to-end verification (REST, GraphQL, WebSocket)
+- Credential management (macOS Keychain or env vars for API keys)
+- Self-evolution sandbox (code review for generated skills)
 
 See `docs/2026-05-23-olympus-architecture-design.md` for full architecture specification.
