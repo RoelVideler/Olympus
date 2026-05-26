@@ -1,6 +1,8 @@
 # tests/test_iaso.py
 import sqlite3
 import os
+import json
+import time
 import pytest
 from pathlib import Path
 
@@ -237,3 +239,162 @@ class TestWithingsAuth:
 
     def test_get_userid_missing(self):
         assert get_userid() is None
+
+
+from withings_sync import handle_withings_sync
+import withings_sync
+
+
+@pytest.fixture
+def clean_db_iaso(tmp_path, monkeypatch):
+    """Use temp database and token for tests."""
+    db = tmp_path / "olympus.db"
+    conn = sqlite3.connect(str(db))
+    schema_path = Path(__file__).parent.parent / "plugins" / "iaso" / "schema" / "001_withings_sync.sql"
+    with open(schema_path) as f:
+        conn.executescript(f.read())
+    conn.close()
+    monkeypatch.setattr("withings_sync._DB_PATH", db)
+    token_path = tmp_path / "token.json"
+    token_path.parent.mkdir(parents=True, exist_ok=True)
+    token_path.write_text(json.dumps({
+        "access_token": "fake_token",
+        "refresh_token": "fake_refresh",
+        "userid": "41770194",
+        "expires_at": int(time.time()) + 3600,
+    }))
+    monkeypatch.setattr("withings_auth.TOKEN_PATH", token_path)
+    yield
+
+
+@pytest.mark.usefixtures("clean_db_iaso")
+class TestSyncData:
+    """Test syncing data from Withings API."""
+
+    def test_sync_requires_valid_token(self):
+        result = handle_withings_sync({"action": "sync_data"})
+        data = json.loads(result)
+        assert "status" in data or "error" in data
+
+    def test_sync_status_returns_counts(self):
+        result = handle_withings_sync({"action": "sync_status"})
+        data = json.loads(result)
+        assert data["status"] == "ok"
+        assert "vitals_count" in data
+        assert "sleep_count" in data
+        assert "activity_count" in data
+
+
+@pytest.mark.usefixtures("clean_db_iaso")
+class TestQueryVitals:
+    """Test querying stored vitals."""
+
+    def test_query_vitals_empty(self):
+        result = handle_withings_sync({"action": "query_vitals"})
+        data = json.loads(result)
+        assert data["status"] == "ok"
+        assert data["count"] == 0
+
+    def test_query_vitals_by_type(self):
+        conn = sqlite3.connect(str(withings_sync._DB_PATH))
+        conn.execute(
+            """INSERT INTO withings_vitals (id, userid, vitals_type, value, measured_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            ("test-v1", "41770194", "weight", 75.0, "2026-05-25T10:00:00"),
+        )
+        conn.execute(
+            """INSERT INTO withings_vitals (id, userid, vitals_type, value, measured_at)
+               VALUES (?, ?, ?, ?, ?)""",
+            ("test-v2", "41770194", "pulse", 72.0, "2026-05-25T10:00:00"),
+        )
+        conn.commit()
+        conn.close()
+
+        result = handle_withings_sync({
+            "action": "query_vitals",
+            "vitals_type": "weight",
+        })
+        data = json.loads(result)
+        assert data["count"] == 1
+        assert data["records"][0]["vitals_type"] == "weight"
+        assert data["records"][0]["value"] == 75.0
+
+    def test_query_vitals_by_date_range(self):
+        result = handle_withings_sync({
+            "action": "query_vitals",
+            "date_from": "2026-05-01",
+            "date_to": "2026-05-31",
+        })
+        data = json.loads(result)
+        assert data["status"] == "ok"
+
+
+@pytest.mark.usefixtures("clean_db_iaso")
+class TestQuerySleep:
+    """Test querying stored sleep data."""
+
+    def test_query_sleep_empty(self):
+        result = handle_withings_sync({"action": "query_sleep"})
+        data = json.loads(result)
+        assert data["status"] == "ok"
+        assert data["count"] == 0
+
+    def test_query_sleep_returns_data(self):
+        conn = sqlite3.connect(str(withings_sync._DB_PATH))
+        conn.execute(
+            """INSERT INTO withings_sleep (id, userid, date, sleep_score, total_sleep_seconds)
+               VALUES (?, ?, ?, ?, ?)""",
+            ("test-s1", "41770194", "2026-05-25", 85, 28800),
+        )
+        conn.commit()
+        conn.close()
+
+        result = handle_withings_sync({"action": "query_sleep"})
+        data = json.loads(result)
+        assert data["count"] == 1
+        assert data["records"][0]["sleep_score"] == 85
+
+
+@pytest.mark.usefixtures("clean_db_iaso")
+class TestQueryActivity:
+    """Test querying stored activity data."""
+
+    def test_query_activity_empty(self):
+        result = handle_withings_sync({"action": "query_activity"})
+        data = json.loads(result)
+        assert data["status"] == "ok"
+        assert data["count"] == 0
+
+    def test_query_activity_returns_data(self):
+        conn = sqlite3.connect(str(withings_sync._DB_PATH))
+        conn.execute(
+            """INSERT INTO withings_activity (id, userid, date, steps, calories)
+               VALUES (?, ?, ?, ?, ?)""",
+            ("test-a1", "41770194", "2026-05-25", 8773, 311.88),
+        )
+        conn.commit()
+        conn.close()
+
+        result = handle_withings_sync({"action": "query_activity"})
+        data = json.loads(result)
+        assert data["count"] == 1
+        assert data["records"][0]["steps"] == 8773
+
+
+@pytest.mark.usefixtures("clean_db_iaso")
+class TestShareFact:
+    """Test sharing health facts."""
+
+    def test_share_fact_requires_fact(self):
+        result = handle_withings_sync({"action": "share_fact"})
+        data = json.loads(result)
+        assert "error" in data
+
+    def test_share_fact_returns_local_fallback(self):
+        result = handle_withings_sync({
+            "action": "share_fact",
+            "fact": "User weight is 75.0 kg",
+            "domain": "health",
+        })
+        data = json.loads(result)
+        assert data["status"] in ("shared", "shared_local")
