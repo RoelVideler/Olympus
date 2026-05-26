@@ -1,0 +1,7 @@
+name: iaso
+version: 1.0.0
+description: "Health sync plugin — Withings device integration for vitals, sleep, and activity tracking."
+author: Olympus
+kind: standalone
+provides_tools:
+  - withings_sync
