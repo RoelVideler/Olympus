@@ -176,3 +176,64 @@ class TestWithingsSchema:
         assert row[2] == 8773
         assert row[3] == 311.88
         conn.close()
+
+
+import time as _time
+import json as _json
+from pathlib import Path as _Path
+import sys
+sys.path.insert(0, str(_Path(__file__).parent.parent / "plugins" / "iaso" / "skills"))
+
+from withings_auth import load_token, save_token, get_access_token, get_userid, refresh_token
+
+
+@pytest.fixture(autouse=True)
+def clean_token(tmp_path, monkeypatch):
+    """Use temp token path for tests."""
+    token_path = tmp_path / "token.json"
+    monkeypatch.setattr("withings_auth.TOKEN_PATH", token_path)
+    yield
+
+
+class TestWithingsAuth:
+    """Test OAuth2 token management."""
+
+    def test_load_token_missing(self):
+        assert load_token() is None
+
+    def test_save_and_load_token(self):
+        token = {"access_token": "abc123", "userid": "41770194", "expires_at": 9999999999}
+        save_token(token)
+        loaded = load_token()
+        assert loaded["access_token"] == "abc123"
+        assert loaded["userid"] == "41770194"
+
+    def test_get_access_token_valid(self):
+        token = {
+            "access_token": "abc123",
+            "userid": "41770194",
+            "expires_at": int(_time.time()) + 3600,
+        }
+        save_token(token)
+        assert get_access_token() == "abc123"
+
+    def test_get_access_token_expired(self):
+        token = {
+            "access_token": "expired",
+            "userid": "41770194",
+            "expires_at": 0,  # Expired
+            "refresh_token": "refresh123",
+            "client_id": "test",
+            "client_secret": "test",
+        }
+        save_token(token)
+        # Will try to refresh and fail (no real server)
+        assert get_access_token() is None
+
+    def test_get_userid(self):
+        token = {"userid": "41770194"}
+        save_token(token)
+        assert get_userid() == "41770194"
+
+    def test_get_userid_missing(self):
+        assert get_userid() is None
