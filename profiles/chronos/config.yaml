@@ -13,6 +13,7 @@ toolsets:
   - memory
   - cronjob
   - share_knowledge
+  - chronos
 
 agent:
   max_turns: 20

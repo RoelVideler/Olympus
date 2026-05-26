@@ -1,0 +1,7 @@
+name: chronos
+version: 1.0.0
+description: "Scheduling plugin — Google Calendar query, event lookup, and availability checking for Chronos profile."
+author: Olympus
+kind: standalone
+provides_tools:
+  - calendar_query
