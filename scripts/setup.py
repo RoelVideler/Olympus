@@ -28,7 +28,7 @@ PLUGINS_DIR = PROJECT_ROOT / "plugins"
 PROFILES_DIR = PROJECT_ROOT / "profiles"
 SCHEMA_DIR = PROJECT_ROOT / "schema"
 
-EXPECTED_PLUGINS = ["zeus", "supervisor", "revolt", "olympus-dashboard", "share_knowledge", "hephaestus"]
+EXPECTED_PLUGINS = ["zeus", "supervisor", "revolt", "olympus-dashboard", "share_knowledge", "hephaestus", "iaso"]
 EXPECTED_PROFILES = [
     "zeus", "chronos", "iaso", "hermes-agent", "philia",
     "plutus", "hephaestus", "metis", "apollo", "midas",
@@ -116,6 +116,14 @@ def phase1_database() -> None:
             log("1/4", "Hephaestus home_maintenance schema installed")
         else:
             log("1/4", "WARNING: Hephaestus schema not found, skipping")
+
+        # Install iaso withings_sync schema
+        iaso_schema = PROJECT_ROOT / "plugins" / "iaso" / "schema" / "001_withings_sync.sql"
+        if iaso_schema.exists():
+            conn.executescript(iaso_schema.read_text())
+            log("1/4", "Iaso withings_sync schema installed")
+        else:
+            log("1/4", "WARNING: Iaso schema not found, skipping")
 
         # Seed agent_profiles table (commits its own transaction)
         _seed_agent_profiles(conn)
